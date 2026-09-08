@@ -357,6 +357,20 @@
       "reason": "21-line slice is a targeted read"
     },
     {
+      "id": 33,
+      "name": "sed-range-under-high-start",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '320,440p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "121-line slice late in the file \u2014 the start of the range must not be truncated"
+    },
+    {
       "id": 27,
       "name": "sed-no-quiet",
       "input": {

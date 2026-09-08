@@ -28,7 +28,7 @@ segments=$(printf '%s\n' "$command" | sed -E 's/&&|;|\|\|/\n/g')
 #   sed -n '1,500p' f   explicit range — block only if the span exceeds the threshold.
 #   sed -n '1,$p' f     open-ended to end-of-file. block.
 check_sed() {
-  local seg="$1" toks=() t i n file="" script="" has_n=0 start end span
+  local seg="$1" toks=() t i n file="" script="" has_n=0 start end span range
   while IFS= read -r t; do [ -n "$t" ] && toks+=("$t"); done < <(printf '%s\n' "$seg" | xargs -n1 printf '%s\n' 2>/dev/null) || return 0
   n=${#toks[@]}; [ "$n" -lt 2 ] && return 0
 
@@ -60,9 +60,12 @@ check_sed() {
   fi
 
   # -n with a numeric range: allow only a bounded span at or under the threshold.
-  if printf '%s' "$script" | grep -qE '[0-9]+,[0-9]+ *p'; then
-    start=$(printf '%s' "$script" | sed -E 's/.*[^0-9]?([0-9]+),([0-9]+) *p.*/\1/')
-    end=$(printf   '%s' "$script" | sed -E 's/.*[^0-9]?([0-9]+),([0-9]+) *p.*/\2/')
+  # Cut the range out with grep -o; a sed capture here would let its leading `.*`
+  # eat all but the last digit of the start ('320,440p' -> start=0, span=441).
+  range=$(printf '%s' "$script" | grep -oE '[0-9]+,[0-9]+ *p' | head -1)
+  if [ -n "$range" ]; then
+    start="${range%%,*}"
+    end="${range#*,}"; end="${end%%[!0-9]*}"
     span=$(( end - start + 1 ))
     [ "$span" -le "$OFFLOAD_MIN_LINES" ] && return 0
     offload_sed_deny "$file" "$lines"; return 1

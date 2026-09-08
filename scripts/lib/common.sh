@@ -40,7 +40,8 @@ _offload_load_file() {
     key="${key%"${key##*[![:space:]]}"}"
     val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
     val="${val%\"}"; val="${val#\"}"
-    case "$key" in OFFLOAD_*) _offload_setdefault "$key" "$val" ;; esac
+    # OFFLOAD_* plus the provider keys (CURSOR_API_KEY) that the docs say belong in this file.
+    case "$key" in OFFLOAD_*|*_API_KEY) _offload_setdefault "$key" "$val" ;; esac
   done < "$f"
 }
 
@@ -262,6 +263,7 @@ offload_project_from_url() {   # remote URL -> "org/repo"
 
 offload_project() {   # -> project id for $1 (default $PWD), or "unknown"
   local d="${1:-$PWD}" url top
+  d=$(cd "$d" 2>/dev/null && pwd -P) || d="${1:-$PWD}"   # "." must not become the project name
   url=$(git -C "$d" remote get-url origin 2>/dev/null) && [ -n "$url" ] && {
     offload_project_from_url "$url"; return 0; }
   # No remote: fall back to the shared git dir, which is one per repo across all worktrees.

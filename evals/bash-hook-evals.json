@@ -14,7 +14,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "Plain cat on large file \u2014 should block"
+      "reason": "Plain cat on large file — should block"
     },
     {
       "id": 2,
@@ -28,7 +28,7 @@
         "lines": 100
       },
       "expected_decision": "allow",
-      "reason": "Small file \u2014 not worth delegating"
+      "reason": "Small file — not worth delegating"
     },
     {
       "id": 3,
@@ -42,7 +42,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "cat with -n flag \u2014 should still block"
+      "reason": "cat with -n flag — should still block"
     },
     {
       "id": 4,
@@ -56,7 +56,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "head with no count = 10 lines \u2014 targeted, allow"
+      "reason": "head with no count = 10 lines — targeted, allow"
     },
     {
       "id": 5,
@@ -70,7 +70,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "head -100 is a bounded read (<= threshold) \u2014 allow, mirrors Read with limit"
+      "reason": "head -100 is a bounded read (<= threshold) — allow, mirrors Read with limit"
     },
     {
       "id": 6,
@@ -84,7 +84,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "tail with no count = 10 lines \u2014 targeted, allow"
+      "reason": "tail with no count = 10 lines — targeted, allow"
     },
     {
       "id": 7,
@@ -98,7 +98,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "less on large file \u2014 should block"
+      "reason": "less on large file — should block"
     },
     {
       "id": 8,
@@ -112,7 +112,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "Piped command \u2014 targeted read"
+      "reason": "Piped command — targeted read"
     },
     {
       "id": 9,
@@ -126,7 +126,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "Redirect \u2014 copying file, not reading into context"
+      "reason": "Redirect — copying file, not reading into context"
     },
     {
       "id": 10,
@@ -152,7 +152,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "grep is a targeted search \u2014 not caught"
+      "reason": "grep is a targeted search — not caught"
     },
     {
       "id": 12,
@@ -166,7 +166,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "Quoted path \u2014 should still be caught"
+      "reason": "Quoted path — should still be caught"
     },
     {
       "id": 13,
@@ -178,7 +178,7 @@
       },
       "fixture": null,
       "expected_decision": "allow",
-      "reason": "File doesn't exist \u2014 let Bash handle the error"
+      "reason": "File doesn't exist — let Bash handle the error"
     },
     {
       "id": 14,
@@ -190,7 +190,7 @@
       },
       "fixture": null,
       "expected_decision": "allow",
-      "reason": "Empty command \u2014 pass through"
+      "reason": "Empty command — pass through"
     },
     {
       "id": 15,
@@ -200,7 +200,7 @@
       },
       "fixture": null,
       "expected_decision": "allow",
-      "reason": "No command field \u2014 pass through"
+      "reason": "No command field — pass through"
     },
     {
       "id": 16,
@@ -214,7 +214,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "more on large file \u2014 only regex-matched command without coverage"
+      "reason": "more on large file — only regex-matched command without coverage"
     },
     {
       "id": 17,
@@ -228,7 +228,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "head -n 5 parsed correctly (count 5 <= threshold) \u2014 allow"
+      "reason": "head -n 5 parsed correctly (count 5 <= threshold) — allow"
     },
     {
       "id": 18,
@@ -242,7 +242,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "head -n 5000 on an 800-line file reads it whole \u2014 block"
+      "reason": "head -n 5000 on an 800-line file reads it whole — block"
     },
     {
       "id": 19,
@@ -256,7 +256,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "tail -n 400 exceeds threshold 350 \u2014 block"
+      "reason": "tail -n 400 exceeds threshold 350 — block"
     },
     {
       "id": 20,
@@ -270,7 +270,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "cat inside an && chain is still a full read \u2014 block"
+      "reason": "cat inside an && chain is still a full read — block"
     },
     {
       "id": 21,
@@ -284,7 +284,7 @@
         "lines": 800
       },
       "expected_decision": "block",
-      "reason": "Quoted path containing a space \u2014 tokenizer must keep it whole"
+      "reason": "Quoted path containing a space — tokenizer must keep it whole"
     },
     {
       "id": 22,
@@ -298,7 +298,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "Byte-limited peek \u2014 allow"
+      "reason": "Byte-limited peek — allow"
     },
     {
       "id": 23,
@@ -368,7 +368,7 @@
         "lines": 800
       },
       "expected_decision": "allow",
-      "reason": "121-line slice late in the file \u2014 the start of the range must not be truncated"
+      "reason": "121-line slice late in the file — the start of the range must not be truncated"
     },
     {
       "id": 27,
@@ -453,6 +453,62 @@
       },
       "expected_decision": "allow",
       "reason": "small file is not worth delegating"
+    },
+    {
+      "id": 34,
+      "name": "cat-stderr-devnull",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt 2>/dev/null"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "2>/dev/null only silences stderr — stdout still lands in context"
+    },
+    {
+      "id": 35,
+      "name": "cat-stderr-to-stdout",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt 2>&1"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "2>&1 is not a redirect away from context"
+    },
+    {
+      "id": 36,
+      "name": "sed-range-stderr-devnull",
+      "input": {
+        "tool_input": {
+          "command": "sed -n \"1,450p\" {{FIXTURES}}/large.txt 2>/dev/null"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "oversized sed slice with a stderr redirect still prints 450 lines"
+    },
+    {
+      "id": 37,
+      "name": "cat-stdout-redirect-with-stderr",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt >/tmp/x 2>&1"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "stdout goes to a file — nothing enters context"
     }
   ]
 }

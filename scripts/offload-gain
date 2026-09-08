@@ -4,7 +4,7 @@
   offload-gain                 totals + by-worker breakdown
   offload-gain --since 7d      last 7 days   (also: 24h, 2026-09-01)
   offload-gain --rate 10       $/1M input tokens of your MAIN model (default: env OFFLOAD_MAIN_RATE or 10)
-  offload-gain --amp 32        context re-send multiplier — see README "why ×32"
+  offload-gain --amp 32        how many turns the file would have stayed in context (README "token accounting")
   offload-gain -v              full breakdown: workers, files, money
   offload-gain --by-project    savings per repository
   offload-gain --history 20    last N delegations

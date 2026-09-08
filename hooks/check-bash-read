@@ -15,8 +15,10 @@ command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -z "$command" ] && exit 0
 
 # Piped → targeted read.  Redirected → not read into context.
+# A stderr-only redirect (2>/dev/null, 2>&1) still sends stdout to the context, so it
+# does not count as a redirect.
 printf '%s' "$command" | grep -qE '\|' && exit 0
-printf '%s' "$command" | grep -qE '>'  && exit 0
+printf '%s' "$command" | sed -E 's/2>&1//g; s/2>[^ ]*//g' | grep -qE '>' && exit 0
 
 # Examine each simple command in a `a && b ; c` chain.
 segments=$(printf '%s\n' "$command" | sed -E 's/&&|;|\|\|/\n/g')

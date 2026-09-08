@@ -61,7 +61,7 @@ arithmetic. `offload doctor` shows what will run; `-v` adds paths and rates.
 ## Install
 
 ```bash
-git clone git@github.com:PabloNAX/offload.git
+git clone https://github.com/PabloNAX/offload.git
 cd offload
 ./install.sh
 ```
@@ -230,7 +230,8 @@ OFFLOAD_DEBUG=1                  # show the worker CLI's stderr when a call fail
 OFFLOAD_MODEL_MAP="opus:claude-sonnet-5 sonnet:claude-haiku-4-5"
 ```
 
-Those twelve keys are the whole surface. Anything not on the list is not read.
+Those are the keys you will normally touch. The rest are `OFFLOAD_MAX_BYTES` (see "Size
+limits"), `OFFLOAD_CURSOR_PARAMS` and `CURSOR_API_KEY` (cursor), and `OFFLOAD_OLLAMA_MODEL`.
 
 Env vars beat the project file, which beats the global file. A one-off is just:
 
@@ -520,7 +521,7 @@ delegation does not.
 ## Development
 
 ```bash
-./evals/run.sh          # 63 cases, no network, no API calls
+./evals/run.sh          # 67 cases, no network, no API calls
 ```
 
 The evals feed JSON straight into the hook scripts. That catches parser bugs but not

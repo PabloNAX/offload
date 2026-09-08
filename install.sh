@@ -55,6 +55,12 @@ esac
 # ---- Claude Code
 if command -v claude >/dev/null 2>&1; then
   if claude plugin marketplace add "$ROOT" >/dev/null 2>&1 || true; then :; fi
+  claude plugin marketplace update offload >/dev/null 2>&1 || true
+  # `claude plugin install` on an already-installed plugin reports success and copies
+  # nothing. Re-running this script after a `git pull` would then leave the old hooks in the
+  # cache — and a stale hook is invisible, because both agents fail open on hook errors.
+  # Uninstalling first is what makes the copy actually happen.
+  claude plugin uninstall offload >/dev/null 2>&1 || true
   if claude plugin install offload@offload >/dev/null 2>&1; then
     printf '%b claude: plugin installed (restart Claude Code to load the hooks)\n' "$ok"
   else
@@ -68,6 +74,7 @@ fi
 # ---- Codex
 if command -v codex >/dev/null 2>&1; then
   codex plugin marketplace add "$ROOT" >/dev/null 2>&1 || true
+  codex plugin marketplace upgrade >/dev/null 2>&1 || true
   if codex plugin add offload@offload >/dev/null 2>&1; then
     printf '%b codex: plugin installed\n' "$ok"
     printf '   %b codex needs two settings for the worker to run — see README "Codex setup"\n' "$warn"
@@ -79,4 +86,5 @@ else
   printf '·  codex CLI not found — skipping\n'
 fi
 
-printf '\ndone.\n\n  offload doctor --test    verify the workers answer\n  offload gain             see what you saved\n\n'
+ver=$(jq -r .version "$ROOT/.claude-plugin/plugin.json" 2>/dev/null || echo '?')
+printf '\ndone (offload %s).\n\n  offload doctor --test    verify the workers answer\n  offload gain             see what you saved\n\n' "$ver"

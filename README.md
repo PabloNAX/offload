@@ -81,6 +81,29 @@ offload doctor --test     # prints the config and actually calls each worker
 
 Restart Claude Code afterwards so it loads the hooks.
 
+### Updating
+
+```bash
+cd offload
+git pull
+./install.sh          # re-copies the plugin into both agents' caches
+```
+
+Then restart Claude Code. `install.sh` is safe to re-run and is the only step you need —
+it uninstalls before installing, because `claude plugin install` on an already-installed
+plugin reports success and copies nothing, which would leave you on the old hooks.
+
+Check what you are actually running:
+
+```bash
+offload doctor
+```
+
+The first line is the version. If a cache has drifted from the source, `doctor` says so and
+names the directory. That check matters more than it looks: both agents fail open on hook
+errors, so a stale hook and no hook look identical — nothing breaks, the wall just quietly
+stops working and your savings report goes back to being wrong.
+
 ### Re-syncing after you edit the source
 
 Both agents copy the plugin into a cache and run from the copy. Editing the source does
@@ -104,7 +127,7 @@ claude plugin uninstall offload && claude plugin install offload@offload
 Verify:
 
 ```bash
-diff -rq ~/.claude/plugins/cache/offload/offload/0.2.0 /path/to/offload
+offload doctor          # names any cache that has drifted from the source
 ```
 
 <details>

@@ -274,6 +274,25 @@ offload_project() {   # -> project id for $1 (default $PWD), or "unknown"
   printf '%s' "${d##*/}"
 }
 
+# Both agents run the plugin from a copy in their own cache, not from this checkout. A copy
+# that has drifted from the source is the one failure you cannot see: the agents fail open on
+# hook errors, so a stale hook and no hook look identical, and the only symptom is that the
+# wall quietly stops working. Print any cache whose hooks or scripts differ from the source.
+offload_stale_caches() {
+  local base d
+  for base in "$HOME/.claude/plugins/cache/offload/offload" "$HOME/.codex/plugins/cache/offload/offload"; do
+    [ -d "$base" ] || continue
+    for d in "$base"/*; do
+      [ -d "$d/hooks" ] || continue
+      [ "$d" -ef "$OFFLOAD_ROOT" ] && continue        # running from the cache itself
+      if ! diff -rq -x '__pycache__' "$d/hooks"   "$OFFLOAD_ROOT/hooks"   >/dev/null 2>&1 ||
+         ! diff -rq -x '__pycache__' "$d/scripts" "$OFFLOAD_ROOT/scripts" >/dev/null 2>&1; then
+        printf '%s\n' "$d"
+      fi
+    done
+  done
+}
+
 offload_hook_deny() {
   jq -nc --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
 }

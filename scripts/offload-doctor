@@ -70,8 +70,12 @@ if [ -n "${CODEX_SANDBOX:-}" ] && { [ "$OFFLOAD_READ_PROVIDER" = codex ] || [ "$
 fi
 mkdir -p "$(dirname "$OFFLOAD_LEDGER")" 2>/dev/null
 touch "$OFFLOAD_LEDGER" 2>/dev/null || problems+=("ledger not writable: $OFFLOAD_LEDGER")
+while IFS= read -r stale; do
+  [ -n "$stale" ] && problems+=("stale plugin cache — the agent is running old hooks: ${stale/#$HOME/~}
+      fix: ./install.sh   (from $OFFLOAD_ROOT), then restart the agent")
+done < <(offload_stale_caches)
 
-printf '\noffload\n\n'
+printf '\noffload %s\n\n' "$(jq -r .version "$OFFLOAD_ROOT/.claude-plugin/plugin.json" 2>/dev/null || echo '?')"
 printf '  main model   %s\n' "${OFFLOAD_HOST_MODEL:-unknown until a hook runs here}"
 printf '  read         %s @ %s\n' "$OFFLOAD_READ_MODEL"  "$OFFLOAD_READ_EFFORT"
 printf '  write        %s @ %s\n' "$OFFLOAD_WRITE_MODEL" "$OFFLOAD_WRITE_EFFORT"

@@ -1,6 +1,6 @@
 {
   "name": "offload",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Keeps large file reads and boilerplate generation out of your main model's context by delegating them to a cheaper worker (Claude Sonnet, Codex, \u2026). Hooks block big reads; scripts do the delegation; a ledger tracks what you saved.",
   "author": {
     "name": "pablo"

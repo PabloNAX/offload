@@ -29,7 +29,7 @@ $ offload gain
 offload Token Savings
 ============================================================
 
-Tokens saved:      116.2K  (109.4K measured + 6.8K estimated)
+Tokens saved:      116.2K   (112.4K → 3.0K back, 6.8K never read)
 Money saved:       $1.16
 Big files caught:  37  (11 different files)
 Worker calls:      14  (claude-sonnet-5)
@@ -37,15 +37,15 @@ Worker time:       3m02s (avg 13.0s)
 Efficiency meter: ████████████████████████░ 98.2%
 ```
 
-The tag on the headline says what kind of number it is, because two different things feed
-it and only one of them is a measurement.
+The bracket is the arithmetic, not a label. **112.4K → 3.0K back** means workers were sent
+112.4K tokens of files and returned 3.0K tokens of answers; the difference never entered
+your context. Both numbers are weighed, so you can check the subtraction yourself.
 
-**measured** — a worker really was sent the file and really did send back a short answer.
-What came back is subtracted, so the figure is what did not enter your context.
-
-**estimated** — the hook stopped a whole-file read and the model answered some other way.
-Nobody paid anything, so what that read *would* have cost is a guess about something that
-did not happen. Whenever that part is non-zero the headline says so.
+**6.8K never read** is the other kind of number and stays outside the arrow on purpose.
+Those are reads the hook stopped, which the model then answered some other way — with a
+`grep`, or a narrow re-read. Nothing was sent anywhere, so nothing was weighed, and what
+that read *would* have cost is a guess about something that did not happen. It only appears
+when it is non-zero.
 
 Per project:
 

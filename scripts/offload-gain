@@ -231,17 +231,20 @@ def main():
     print(f"\noffload Token Savings{since}")
     print("=" * 60)
     print()
-    # The headline is one number, but it can be made of two kinds of number and the tag says
-    # which. "measured" was really sent to a worker and really did not enter this context.
-    # "estimated" is a read the wall stopped: nobody paid, so its cost is a guess about
-    # something that did not happen. The split is only worth printing when both parts exist —
-    # spelling out "estimated 0" on every run is noise, and noise is what gets skipped.
-    if b_tok_undelegated and kept:
-        made_of = f"  ({human(kept)} measured + {human(b_tok_undelegated)} estimated)"
-    elif b_tok_undelegated:
-        made_of = "  (estimated — reads the wall stopped, so nobody paid)"
-    else:
-        made_of = "  (measured)"
+    # Show the arithmetic instead of naming it. "20.0K -> 976 back" is the whole claim in one
+    # glance: that much went to a worker, that little came back, the difference is the saving.
+    # A label like "measured" says nothing a reader can check; the two numbers do.
+    #
+    # "never read" is the other kind of number and stays separate for a reason: those tokens
+    # were never sent anywhere, so nothing was weighed. The wall stopped the read and the
+    # model answered another way, which makes that figure a guess about a thing that did not
+    # happen. Folding it into the arrow would dress an estimate up as a measurement.
+    parts = []
+    if tin:
+        parts.append(f"{human(tin)} \u2192 {human(tout)} back")
+    if b_tok_undelegated:
+        parts.append(f"{human(b_tok_undelegated)} never read")
+    made_of = f"   ({', '.join(parts)})" if parts else ""
     print(f"Tokens saved:      {human(total_kept)}{made_of}")
     print(f"Money saved:       ${usd:,.2f}")
     print(f"Big files caught:  {b_n}" + (f"  ({b_files} different files)" if b_files != b_n else ""))

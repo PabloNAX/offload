@@ -29,26 +29,23 @@ $ offload gain
 offload Token Savings
 ============================================================
 
-Kept out of context: 116.2K
-  delegated    109.4K   measured  — sent to a worker, minus its answer
-  avoided        6.8K   estimated — whole-file reads the wall stopped
-Money saved:       $1.16   (your model at $5/1M in, file held 1 turn)
+Tokens saved:      116.2K  (109.4K measured + 6.8K estimated)
+Money saved:       $1.16
 Big files caught:  37  (11 different files)
 Worker calls:      14  (claude-sonnet-5)
 Worker time:       3m02s (avg 13.0s)
-Share of would-be context avoided: ████████████████████████░ 98.2%
+Efficiency meter: ████████████████████████░ 98.2%
 ```
 
-The two lines are different kinds of number and are kept apart on purpose.
+The tag on the headline says what kind of number it is, because two different things feed
+it and only one of them is a measurement.
 
-**delegated** is a measurement. Those tokens were really sent to a worker, and what came
-back is subtracted, so the figure is what the file would have added to your context minus
-what the answer actually did add.
+**measured** — a worker really was sent the file and really did send back a short answer.
+What came back is subtracted, so the figure is what did not enter your context.
 
-**avoided** is a counterfactual. The hook stopped a whole-file read and the model answered
-some other way, so nobody paid anything; what the read *would* have cost is an estimate of
-a thing that did not happen. It is the softer of the two numbers, which is why it is not
-folded into the headline.
+**estimated** — the hook stopped a whole-file read and the model answered some other way.
+Nobody paid anything, so what that read *would* have cost is a guess about something that
+did not happen. Whenever that part is non-zero the headline says so.
 
 Per project:
 

@@ -231,19 +231,24 @@ def main():
     print(f"\noffload Token Savings{since}")
     print("=" * 60)
     print()
-    # Two different kinds of number, kept apart on purpose. "delegated" is measured: those
-    # tokens were really sent to a worker and really did not enter this context. "avoided" is
-    # a counterfactual: the read was stopped, so nobody paid, and what it *would* have cost is
-    # an estimate. Adding them into one headline figure is how a savings report starts lying.
-    print(f"Kept out of context: {human(total_kept)}")
-    print(f"  delegated  {human(kept):>8}   measured  — sent to a worker, minus its answer")
-    print(f"  avoided    {human(b_tok_undelegated):>8}   estimated — whole-file reads the wall stopped")
-    print(f"Money saved:       ${usd:,.2f}   (your model at ${a.rate:g}/1M in, file held {a.amp:g} turn{'s' if a.amp != 1 else ''})")
+    # The headline is one number, but it can be made of two kinds of number and the tag says
+    # which. "measured" was really sent to a worker and really did not enter this context.
+    # "estimated" is a read the wall stopped: nobody paid, so its cost is a guess about
+    # something that did not happen. The split is only worth printing when both parts exist —
+    # spelling out "estimated 0" on every run is noise, and noise is what gets skipped.
+    if b_tok_undelegated and kept:
+        made_of = f"  ({human(kept)} measured + {human(b_tok_undelegated)} estimated)"
+    elif b_tok_undelegated:
+        made_of = "  (estimated — reads the wall stopped, so nobody paid)"
+    else:
+        made_of = "  (measured)"
+    print(f"Tokens saved:      {human(total_kept)}{made_of}")
+    print(f"Money saved:       ${usd:,.2f}")
     print(f"Big files caught:  {b_n}" + (f"  ({b_files} different files)" if b_files != b_n else ""))
     print(f"Worker calls:      {n}" + (f"  ({workers})" if workers else ""))
     if secs_total:
         print(f"Worker time:       {dur(secs_total)} (avg {secs_total/max(n,1):.1f}s)")
-    print(f"Share of would-be context avoided: {bar(eff, 25)} {eff:.1f}%")
+    print(f"Efficiency meter: {bar(eff, 25)} {eff:.1f}%")
     if dropped:
         print(f"\n  ({dropped} ledger row{'s' if dropped != 1 else ''} ignored: duplicates, or media priced as if it were source text)")
     print()

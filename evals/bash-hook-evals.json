@@ -1,0 +1,444 @@
+{
+  "skill_name": "offload",
+  "description": "Evals for the check-bash-read PreToolUse hook",
+  "evals": [
+    {
+      "id": 1,
+      "name": "cat-large-file",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "Plain cat on large file \u2014 should block"
+    },
+    {
+      "id": 2,
+      "name": "cat-small-file",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/small.txt"
+        }
+      },
+      "fixture": {
+        "lines": 100
+      },
+      "expected_decision": "allow",
+      "reason": "Small file \u2014 not worth delegating"
+    },
+    {
+      "id": 3,
+      "name": "cat-with-flag",
+      "input": {
+        "tool_input": {
+          "command": "cat -n {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "cat with -n flag \u2014 should still block"
+    },
+    {
+      "id": 4,
+      "name": "head-large-file",
+      "input": {
+        "tool_input": {
+          "command": "head {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "head with no count = 10 lines \u2014 targeted, allow"
+    },
+    {
+      "id": 5,
+      "name": "head-with-count",
+      "input": {
+        "tool_input": {
+          "command": "head -100 {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "head -100 is a bounded read (<= threshold) \u2014 allow, mirrors Read with limit"
+    },
+    {
+      "id": 6,
+      "name": "tail-large-file",
+      "input": {
+        "tool_input": {
+          "command": "tail {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "tail with no count = 10 lines \u2014 targeted, allow"
+    },
+    {
+      "id": 7,
+      "name": "less-large-file",
+      "input": {
+        "tool_input": {
+          "command": "less {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "less on large file \u2014 should block"
+    },
+    {
+      "id": 8,
+      "name": "cat-pipe",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt | grep export"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "Piped command \u2014 targeted read"
+    },
+    {
+      "id": 9,
+      "name": "cat-redirect",
+      "input": {
+        "tool_input": {
+          "command": "cat {{FIXTURES}}/large.txt > /tmp/out.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "Redirect \u2014 copying file, not reading into context"
+    },
+    {
+      "id": 10,
+      "name": "non-read-command",
+      "input": {
+        "tool_input": {
+          "command": "git status"
+        }
+      },
+      "fixture": null,
+      "expected_decision": "allow",
+      "reason": "Not a file read command"
+    },
+    {
+      "id": 11,
+      "name": "grep-command",
+      "input": {
+        "tool_input": {
+          "command": "grep -n 'export' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "grep is a targeted search \u2014 not caught"
+    },
+    {
+      "id": 12,
+      "name": "cat-quoted-path",
+      "input": {
+        "tool_input": {
+          "command": "cat \"{{FIXTURES}}/large.txt\""
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "Quoted path \u2014 should still be caught"
+    },
+    {
+      "id": 13,
+      "name": "cat-nonexistent",
+      "input": {
+        "tool_input": {
+          "command": "cat /tmp/shunt-does-not-exist.txt"
+        }
+      },
+      "fixture": null,
+      "expected_decision": "allow",
+      "reason": "File doesn't exist \u2014 let Bash handle the error"
+    },
+    {
+      "id": 14,
+      "name": "empty-command",
+      "input": {
+        "tool_input": {
+          "command": ""
+        }
+      },
+      "fixture": null,
+      "expected_decision": "allow",
+      "reason": "Empty command \u2014 pass through"
+    },
+    {
+      "id": 15,
+      "name": "missing-command-field",
+      "input": {
+        "tool_input": {}
+      },
+      "fixture": null,
+      "expected_decision": "allow",
+      "reason": "No command field \u2014 pass through"
+    },
+    {
+      "id": 16,
+      "name": "more-large-file",
+      "input": {
+        "tool_input": {
+          "command": "more {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "more on large file \u2014 only regex-matched command without coverage"
+    },
+    {
+      "id": 17,
+      "name": "head-n-space-count",
+      "input": {
+        "tool_input": {
+          "command": "head -n 5 {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "head -n 5 parsed correctly (count 5 <= threshold) \u2014 allow"
+    },
+    {
+      "id": 18,
+      "name": "head-n-huge",
+      "input": {
+        "tool_input": {
+          "command": "head -n 5000 {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "head -n 5000 on an 800-line file reads it whole \u2014 block"
+    },
+    {
+      "id": 19,
+      "name": "tail-n-over-threshold",
+      "input": {
+        "tool_input": {
+          "command": "tail -n 400 {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "tail -n 400 exceeds threshold 350 \u2014 block"
+    },
+    {
+      "id": 20,
+      "name": "cat-after-cd-chain",
+      "input": {
+        "tool_input": {
+          "command": "cd /tmp && cat {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "cat inside an && chain is still a full read \u2014 block"
+    },
+    {
+      "id": 21,
+      "name": "cat-path-with-space",
+      "input": {
+        "tool_input": {
+          "command": "cat \"{{FIXTURES}}/dir with space/large.txt\""
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "Quoted path containing a space \u2014 tokenizer must keep it whole"
+    },
+    {
+      "id": 22,
+      "name": "cat-bytes-limited",
+      "input": {
+        "tool_input": {
+          "command": "head -c 200 {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "Byte-limited peek \u2014 allow"
+    },
+    {
+      "id": 23,
+      "name": "nl-large-file",
+      "input": {
+        "tool_input": {
+          "command": "nl {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "nl dumps the whole file like cat"
+    },
+    {
+      "id": 24,
+      "name": "bat-large-file",
+      "input": {
+        "tool_input": {
+          "command": "bat {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "bat is a cat replacement"
+    },
+    {
+      "id": 25,
+      "name": "sed-range-over",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '1,500p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "500-line span exceeds the 350 threshold"
+    },
+    {
+      "id": 26,
+      "name": "sed-range-under",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '100,120p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "21-line slice is a targeted read"
+    },
+    {
+      "id": 27,
+      "name": "sed-no-quiet",
+      "input": {
+        "tool_input": {
+          "command": "sed 's/a/b/' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "without -n sed prints every line"
+    },
+    {
+      "id": 28,
+      "name": "sed-open-ended",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '1,$p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "block",
+      "reason": "range runs to end of file"
+    },
+    {
+      "id": 29,
+      "name": "sed-pattern-address",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '/needle/p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "pattern address is grep-like"
+    },
+    {
+      "id": 30,
+      "name": "sed-single-line",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '485p' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "one line is a targeted read"
+    },
+    {
+      "id": 31,
+      "name": "sed-in-place",
+      "input": {
+        "tool_input": {
+          "command": "sed -i '' 's/a/b/' {{FIXTURES}}/large.txt"
+        }
+      },
+      "fixture": {
+        "lines": 800
+      },
+      "expected_decision": "allow",
+      "reason": "in-place edit never enters context"
+    },
+    {
+      "id": 32,
+      "name": "sed-small-file",
+      "input": {
+        "tool_input": {
+          "command": "sed -n '1,500p' {{FIXTURES}}/small_sed.txt"
+        }
+      },
+      "fixture": {
+        "lines": 40
+      },
+      "expected_decision": "allow",
+      "reason": "small file is not worth delegating"
+    }
+  ]
+}

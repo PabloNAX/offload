@@ -1,0 +1,40 @@
+#!/bin/bash
+# offload — keep big file reads and boilerplate generation out of your main model's context.
+#
+#   offload read   --question "…" --paths a.ts b.ts     ask a worker about files
+#   offload write  --spec "…" --reference ref.ts [--target out.ts]
+#   offload gain   [--since 7d] [--history] [--json]    what you saved
+#   offload doctor [--test]                             config + provider health
+#   offload config [--init] [--global]                  create/show config file
+#
+# Everything is configured through env vars or .offload.env — see `offload doctor`.
+
+set -uo pipefail
+
+# Resolve the symlink chain: `offload` is normally a symlink in ~/.local/bin pointing
+# back into the plugin, and the real scripts live next to the resolved target.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  case "$_self" in /*) ;; *) _self="$_dir/$_self" ;; esac
+done
+ROOT="$(cd "$(dirname "$_self")/.." && pwd)"
+unset _self _dir
+
+usage() { sed -n "2,11p" "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+  read)          exec "$ROOT/scripts/bulk-read"     "$@" ;;
+  write)         exec "$ROOT/scripts/code-write"    "$@" ;;
+  gain)          # offload-gain is standalone Python; export the resolved config first so it
+                 # sees the auto-derived main-model rate and ledger path.
+                 . "$ROOT/scripts/lib/common.sh"; offload_load_config
+                 exec "$ROOT/scripts/offload-gain"  "$@" ;;
+  doctor)        exec "$ROOT/scripts/offload-doctor" "$@" ;;
+  config)        exec "$ROOT/scripts/offload-doctor" --config "$@" ;;
+  -h|--help|help|"") usage ;;
+  --version|version) echo "offload $(jq -r .version "$ROOT/.claude-plugin/plugin.json" 2>/dev/null || echo '?')" ;;
+  *) echo "offload: unknown command '$cmd'" >&2; echo >&2; usage >&2; exit 1 ;;
+esac

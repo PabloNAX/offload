@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""offload-gain — what did delegation keep out of your main model's context?
+
+  offload-gain                 totals + by-worker breakdown
+  offload-gain --since 7d      last 7 days   (also: 24h, 2026-09-01)
+  offload-gain --rate 10       $/1M input tokens of your MAIN model (default: env OFFLOAD_MAIN_RATE or 10)
+  offload-gain --amp 32        context re-send multiplier — see README "why ×32"
+  offload-gain -v              full breakdown: workers, files, money
+  offload-gain --by-project    savings per repository
+  offload-gain --history 20    last N delegations
+  offload-gain --json          machine-readable
+"""
+import argparse, collections, datetime as dt, json, os, sys
+
+LEDGER = os.environ.get("OFFLOAD_LEDGER") or os.path.expanduser("~/.local/share/offload/ledger.jsonl")
+
+# Published list prices, $ per 1M tokens (input, output). Matched by substring against the
+# model id, longest pattern first. A worker is not free — its cost is subtracted from the
+# saving, otherwise this report is marketing rather than accounting.
+RATES = [
+    ("claude-fable",   (10.00, 50.00)),
+    ("claude-mythos",  (10.00, 50.00)),
+    ("claude-opus",    ( 5.00, 25.00)),
+    ("claude-sonnet",  ( 2.00, 10.00)),
+    ("claude-haiku",   ( 1.00,  5.00)),
+    ("fable",          (10.00, 50.00)),
+    ("opus",           ( 5.00, 25.00)),
+    ("sonnet",         ( 2.00, 10.00)),
+    ("haiku",          ( 1.00,  5.00)),
+]
+
+def rate_for(model, default=(2.00, 10.00)):
+    m = (model or "").lower()
+    for pat, r in RATES:
+        if pat in m:
+            return r
+    return default   # unknown worker (e.g. a gpt-* model, no public rate here)
+
+def known_rate(model):
+    m = (model or "").lower()
+    return any(pat in m for pat, _ in RATES)
+
+def parse_since(s):
+    if not s: return None
+    now = dt.datetime.now(dt.timezone.utc)
+    if s.endswith("d"): return now - dt.timedelta(days=int(s[:-1]))
+    if s.endswith("h"): return now - dt.timedelta(hours=int(s[:-1]))
+    return dt.datetime.fromisoformat(s).replace(tzinfo=dt.timezone.utc)
+
+def load(since):
+    rows = []
+    if not os.path.exists(LEDGER): return rows
+    with open(LEDGER, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: r = json.loads(line)
+            except json.JSONDecodeError: continue
+            if since:
+                try: ts = dt.datetime.fromisoformat(r["ts"].replace("Z", "+00:00"))
+                except Exception: continue
+                if ts < since: continue
+            rows.append(r)
+    return rows
+
+def fmt(n): return f"{n:,}"
+
+def human(n):
+    n = n or 0
+    if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+    if n >= 1_000:     return f"{n/1_000:.1f}K"
+    return str(n)
+
+def dur(sec):
+    sec = int(sec or 0)
+    if sec >= 3600: return f"{sec//3600}h{(sec%3600)//60:02d}m"
+    if sec >= 60:   return f"{sec//60}m{sec%60:02d}s"
+    return f"{sec}s"
+
+def bar(pct, width=10):
+    pct = max(0.0, min(100.0, pct or 0.0))
+    filled = int(round(width * pct / 100.0))
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--since"); ap.add_argument("--rate", type=float, default=float(os.environ.get("OFFLOAD_MAIN_RATE", 10)))
+    ap.add_argument("--amp", type=float, default=1.0); ap.add_argument("--history", type=int, default=0)
+    ap.add_argument("--json", action="store_true"); ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("-v", "--full", action="store_true")
+    ap.add_argument("--by-project", action="store_true")
+    a = ap.parse_args()
+    if a.help: print(__doc__); return
+
+    allrows = load(parse_since(a.since))
+    blocks = [r for r in allrows if r.get("role") == "block"]
+    rows   = [r for r in allrows if r.get("role") != "block"]
+    n = len(rows); reads = sum(1 for r in rows if r.get("role") == "read"); writes = n - reads
+    b_n = len(blocks); b_tok = sum(r.get("est_tokens", 0) for r in blocks)
+    b_files = len({r.get("file") for r in blocks})
+    # A blocked file that was then sent to a worker is already counted in `kept`.
+    # Only blocks solved another way (grep, a narrow re-read) add on top of it.
+    delegated_files = {f for r in rows for f in r.get("files", [])}
+    b_tok_undelegated = sum(r.get("est_tokens", 0) for r in blocks if r.get("file") not in delegated_files)
+    secs_total = sum(r.get("secs", 0) for r in rows)
+    tin = sum(r.get("in_tokens", 0) for r in rows); tout = sum(r.get("out_tokens", 0) for r in rows)
+    kept = max(tin - tout, 0); pct = (100.0 * kept / tin) if tin else 0.0
+
+    # --- real money -------------------------------------------------------------
+    # a.rate is the MAIN model's input rate. `a.amp` is how many turns a chunk of
+    # context is re-sent for before the conversation ends.
+    main_in = a.rate / 1e6
+    # What the main model would have paid to hold all of it, for `amp` turns.
+    would_have = (tin + b_tok_undelegated) * main_in * a.amp
+    # What the workers actually charged.
+    worker_cost = 0.0; unpriced = 0
+    for r in rows:
+        ri, ro = rate_for(r.get("model"))
+        if not known_rate(r.get("model")): unpriced += 1
+        worker_cost += r.get("in_tokens", 0) * ri / 1e6 + r.get("out_tokens", 0) * ro / 1e6
+    # What the main model still pays: the answers that did enter context, for `amp` turns.
+    still_pay = tout * main_in * a.amp
+    usd = would_have - worker_cost - still_pay
+    usd_amp = usd
+    by = collections.defaultdict(lambda: {"calls": 0, "in": 0, "out": 0, "secs": 0})
+    for r in rows:
+        k = f'{r.get("provider","?")}/{r.get("model","?")}@{r.get("effort","?")}'
+        b = by[k]; b["calls"] += 1; b["in"] += r.get("in_tokens", 0); b["out"] += r.get("out_tokens", 0); b["secs"] += r.get("secs", 0)
+
+    if a.json:
+        print(json.dumps({"blocked_reads": b_n, "blocked_files": b_files, "blocked_tokens": b_tok,
+                          "delegations": n, "reads": reads, "writes": writes, "sent_tokens": tin, "returned_tokens": tout,
+                          "kept_out_tokens": kept, "kept_pct": round(pct, 1), "rate_per_1m": a.rate, "usd_saved": round(usd, 4),
+                          "blocked_tokens_not_delegated": b_tok_undelegated, "worker_secs": secs_total,
+                          "usd_would_have_paid": round(would_have, 4), "usd_worker_cost": round(worker_cost, 4),
+                          "usd_still_paid": round(still_pay, 4), "usd_net_saved": round(usd, 4),
+                          "amp": a.amp, "usd_saved_amplified": round(usd_amp, 2), "by_worker": by, "ledger": LEDGER}, indent=2))
+        return
+
+    if not b_n and not n:
+        print("\noffload Token Savings\n" + "=" * 60 + "\n\nNothing saved yet — no file has crossed the threshold.\n")
+        return
+
+    if a.by_project:
+        # Delegated files are already counted in the worker rows; only blocks that were
+        # never delegated add on top, exactly as in the headline number.
+        delegated = {f for r in rows for f in r.get("files", [])}
+        per = collections.defaultdict(lambda: {"tok": 0, "blocks": 0, "calls": 0, "usd": 0.0})
+        for r in blocks:
+            e = per[r.get("project") or "unknown"]; e["blocks"] += 1
+            if r.get("file") not in delegated:
+                e["tok"] += r.get("est_tokens", 0)
+                e["usd"] += r.get("est_tokens", 0) * main_in * a.amp
+        for r in rows:
+            e = per[r.get("project") or "unknown"]; e["calls"] += 1
+            ti, to = r.get("in_tokens", 0), r.get("out_tokens", 0)
+            ri, ro = rate_for(r.get("model"))
+            e["tok"] += max(ti - to, 0)
+            e["usd"] += ti * main_in * a.amp - (ti * ri / 1e6 + to * ro / 1e6) - to * main_in * a.amp
+        print("\noffload Token Savings by project")
+        print("=" * 60 + "\n")
+        ranked = sorted(per.items(), key=lambda kv: -kv[1]["tok"])
+        width = min(max((len(k) for k, _ in ranked), default=7), 34)
+        for k, e in ranked:
+            print(f"  {k[:width]:<{width}}  {human(e['tok']):>8} saved  ${e['usd']:>6,.2f}"
+                  f"  {e['blocks']:>3} caught  {e['calls']:>3} calls")
+        print()
+        return
+
+    total_kept = b_tok_undelegated + kept
+    denom = b_tok_undelegated + tin
+    eff = (100.0 * total_kept / denom) if denom else 0.0
+    # Name the busiest worker and count the rest — an alphabetical list of every model
+    # is both too long for one line and misleading about which one did the work.
+    wcount = collections.Counter(r.get("model", "?") for r in rows)
+    if not wcount:
+        workers = ""
+    elif len(wcount) == 1:
+        workers = next(iter(wcount))
+    else:
+        top, _ = wcount.most_common(1)[0]
+        workers = f"mostly {top}, +{len(wcount) - 1} more"
+    since = f"  ({a.since})" if a.since else ""
+
+    print(f"\noffload Token Savings{since}")
+    print("=" * 60)
+    print()
+    print(f"Tokens saved:      {human(total_kept)} ({eff:.1f}%)")
+    print(f"Money saved:       ${usd:,.2f}")
+    print(f"Big files caught:  {b_n}" + (f"  ({b_files} different files)" if b_files != b_n else ""))
+    print(f"Worker calls:      {n}" + (f"  ({workers})" if workers else ""))
+    if secs_total:
+        print(f"Worker time:       {dur(secs_total)} (avg {secs_total/max(n,1):.1f}s)")
+    print(f"Efficiency meter: {bar(eff, 25)} {eff:.1f}%")
+    print()
+
+    if not a.full:
+        return
+
+    print("─" * 64)
+    if by:
+        print("\nBy worker")
+        for k, b in sorted(by.items(), key=lambda kv: (-kv[1]["calls"], -kv[1]["in"])):
+            bk = b["in"] - b["out"]
+            print(f"  {k[:38]:<38}{b['calls']:>4} calls  {human(bk):>8} saved  {dur(b['secs']):>6}")
+
+    if blocks:
+        agg = collections.defaultdict(lambda: {"n": 0, "tok": 0, "lines": 0})
+        for r in blocks:
+            e = agg[r.get("file", "?")]
+            e["n"] += 1; e["tok"] = max(e["tok"], r.get("est_tokens", 0)); e["lines"] = max(e["lines"], r.get("lines", 0))
+        print("\nBiggest files caught")
+        for f, e in sorted(agg.items(), key=lambda kv: -(kv[1]["n"] * kv[1]["tok"]))[:10]:
+            print(f"  {(os.path.basename(f) or f)[:38]:<38}{e['n']:>4} time{'s' if e['n'] != 1 else ' '}  {e['lines']:>6} lines  {human(e['tok']):>8} saved")
+
+    print(f"\nThe money, in full")
+    print(f"  Reading these files yourself would cost   ${would_have:>9,.4f}")
+    print(f"  What the cheap worker charged instead    -${worker_cost:>9,.4f}")
+    print(f"  What you still pay for its answers       -${still_pay:>9,.4f}")
+    print(f"  You saved                                 ${usd:>9,.4f}")
+    print(f"  (your model at ${a.rate:g}/1M input, file held for {a.amp:g} turn{'s' if a.amp != 1 else ''})")
+
+    if a.history:
+        print(f"\nlast {a.history}")
+        for r in rows[-a.history:]:
+            files = ", ".join(os.path.basename(f) for f in r.get("files", []))[:34]
+            print(f"  {r.get('ts','')[11:16]}  {r.get('role','?'):<5} {r.get('model','?')[:26]:<26}"
+                  f"{human(r.get('in_tokens',0)):>8} -> {human(r.get('out_tokens',0)):>6}  {files}")
+
+    print("\n  A file in context is paid for every turn; the worker is paid once.")
+    print("  Use --amp 10 for a longer conversation.")
+    print("  Searches the model runs to double-check a worker are not counted here.")
+    print("  On a subscription you are billed nothing — you save context and quota.")
+    print(f"\n  {LEDGER}\n")
+
+if __name__ == "__main__":
+    main()

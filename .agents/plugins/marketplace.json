@@ -1,0 +1,13 @@
+{
+  "name": "offload",
+  "interface": { "displayName": "Offload" },
+  "plugins": [
+    {
+      "name": "offload",
+      "description": "Delegate large file reads and boilerplate generation to a cheaper worker model. Hooks + scripts + savings ledger.",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE" },
+      "category": "Developer Tools"
+    }
+  ]
+}

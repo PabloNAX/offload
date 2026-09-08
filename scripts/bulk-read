@@ -1,0 +1,52 @@
+#!/bin/bash
+# offload · bulk-read — send files to the worker, get back only the answer.
+# Usage: bulk-read --question "what does this do?" --paths a.ts b.ts [...]
+
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+offload_load_config
+
+SYSTEM='You are a precise code analyst. Read the provided files and answer the question concisely. Output structured bullets only. No greetings, no prose, no preambles, no summaries. Lead every bullet with the exact name, type, or line number. Use nested bullets for details. Skip anything the caller did not ask for. Do not run tools and do not explore the filesystem — everything you need is in this message.'
+
+question=""; paths=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --question) question="$2"; shift 2 ;;
+    --paths)    shift; while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do paths+=("$1"); shift; done ;;
+    -h|--help)  sed -n '2,4p' "$0"; exit 0 ;;
+    *)          shift ;;
+  esac
+done
+[ -z "$question" ]      && { echo "Error: --question is required" >&2; exit 1; }
+[ ${#paths[@]} -eq 0 ]  && { echo "Error: --paths is required" >&2; exit 1; }
+for p in "${paths[@]}"; do
+  [ -f "$p" ] && [ -r "$p" ] || { echo "Error: file not found or unreadable: $p" >&2; exit 1; }
+done
+
+# Refuse oversized payloads rather than paying for a call that will be truncated or
+# rejected by the worker's own context limit. OFFLOAD_MAX_BYTES is the knob.
+total=0
+for p in "${paths[@]}"; do
+  n=$(wc -c < "$p" 2>/dev/null | tr -d ' '); total=$(( total + ${n:-0} ))
+done
+limit="$OFFLOAD_MAX_BYTES"; why="OFFLOAD_MAX_BYTES"
+pmax=$(offload_provider_max_bytes "$OFFLOAD_READ_PROVIDER")
+if [ "$pmax" -gt 0 ] && [ "$pmax" -lt "$limit" ]; then
+  limit="$pmax"; why="the $OFFLOAD_READ_PROVIDER provider's ceiling"
+fi
+if [ "$total" -gt "$limit" ]; then
+  echo "Error: ${#paths[@]} file(s) total $((total/1024))KB (~$((total/4)) tokens), over" >&2
+  echo "       $why of $((limit/1024))KB." >&2
+  [ "$pmax" -gt 0 ] && [ "$limit" = "$pmax" ] && \
+    echo "       $OFFLOAD_READ_PROVIDER truncates larger prompts without saying so." >&2
+  echo "       Ask about fewer files, or switch provider: OFFLOAD_READ_PROVIDER=claude" >&2
+  exit 1
+fi
+
+offload_tmpfile msg || exit 1
+for p in "${paths[@]}"; do
+  { printf '<file path="%s">\n' "$p"; cat "$p"; printf '</file>\n\n'; } >> "$msg"
+done
+printf 'Question: %s\n' "$question" >> "$msg"
+
+offload_invoke read "$SYSTEM" "$msg" || exit 1
+offload_ledger read "$(printf '%s\n' "${paths[@]}" | jq -R . | jq -sc .)"

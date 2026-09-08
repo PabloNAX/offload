@@ -1,0 +1,143 @@
+#!/bin/bash
+# offload · doctor — show the effective configuration, verify the workers actually answer.
+#   offload doctor            what it will use, and whether anything is broken
+#   offload doctor -v         plus paths, provider and rate detail
+#   offload doctor --test     also send a one-word prompt to each configured worker
+#   offload config [--init] [--global]
+
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+
+mode=doctor; do_test=0; init=0; global=0; verbose=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) mode=config ;;
+    --test|-t) do_test=1 ;;
+    -v|--full) verbose=1 ;;
+    --init)   init=1 ;;
+    --global) global=1 ;;
+    -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+  shift
+done
+
+ok="\033[32m✔\033[0m"; bad="\033[31m✘\033[0m"; warn="\033[33m!\033[0m"; dim="\033[2m"; off="\033[0m"
+
+# ---------------------------------------------------------------- offload config
+if [ "$mode" = config ]; then
+  if [ "$global" -eq 1 ]; then target="${XDG_CONFIG_HOME:-$HOME/.config}/offload/config"
+  else target="$PWD/.offload.env"; fi
+  if [ "$init" -eq 1 ]; then
+    if [ -e "$target" ]; then echo "Already exists: $target"; else
+      mkdir -p "$(dirname "$target")"
+      cp "$OFFLOAD_ROOT/config/offload.env.example" "$target"
+      echo "Created $target"
+    fi
+    echo; echo "Edit it, then run: offload doctor --test"
+  else
+    echo "project : $PWD/.offload.env"
+    [ -f "$PWD/.offload.env" ] && sed 's/^/          /' "$PWD/.offload.env" || echo "          (not present — create with: offload config --init)"
+    echo
+    echo "global  : ${XDG_CONFIG_HOME:-$HOME/.config}/offload/config"
+    [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/offload/config" ] \
+      && sed 's/^/          /' "${XDG_CONFIG_HOME:-$HOME/.config}/offload/config" \
+      || echo "          (not present — create with: offload config --init --global)"
+  fi
+  exit 0
+fi
+
+# ---------------------------------------------------------------- offload doctor
+# Capture whether the provider was pinned by the user before defaults are filled in.
+provider_was_explicit=0; [ -n "${OFFLOAD_PROVIDER:-}" ] && [ "${OFFLOAD_PROVIDER}" != auto ] && provider_was_explicit=1
+offload_load_config
+host=$(offload_host)
+case "$host" in
+  claude) host_label="Claude Code" ;;
+  codex)  host_label="Codex" ;;
+  *)      host_label="plain shell (no agent detected)" ;;
+esac
+
+# Collect problems first: stay quiet when healthy, speak up when not.
+problems=()
+for dep in jq bash; do command -v "$dep" >/dev/null 2>&1 || problems+=("missing $dep"); done
+command -v "$(offload_provider_cmd "$OFFLOAD_READ_PROVIDER")"  >/dev/null 2>&1 || problems+=("$OFFLOAD_READ_PROVIDER CLI not found")
+command -v "$(offload_provider_cmd "$OFFLOAD_WRITE_PROVIDER")" >/dev/null 2>&1 || problems+=("$OFFLOAD_WRITE_PROVIDER CLI not found")
+[ -n "$(offload_timeout_cmd)" ] || problems+=("no timeout/gtimeout — worker calls are not time-limited")
+if [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = "1" ]; then
+  problems+=("codex sandbox has no network — add: -c sandbox_workspace_write.network_access=true")
+fi
+if [ -n "${CODEX_SANDBOX:-}" ] && { [ "$OFFLOAD_READ_PROVIDER" = codex ] || [ "$OFFLOAD_WRITE_PROVIDER" = codex ]; }; then
+  problems+=("codex exec cannot run nested in the codex sandbox — use OFFLOAD_PROVIDER=claude")
+fi
+mkdir -p "$(dirname "$OFFLOAD_LEDGER")" 2>/dev/null
+touch "$OFFLOAD_LEDGER" 2>/dev/null || problems+=("ledger not writable: $OFFLOAD_LEDGER")
+
+printf '\noffload\n\n'
+printf '  main model   %s\n' "${OFFLOAD_HOST_MODEL:-unknown until a hook runs here}"
+printf '  read         %s @ %s\n' "$OFFLOAD_READ_MODEL"  "$OFFLOAD_READ_EFFORT"
+printf '  write        %s @ %s\n' "$OFFLOAD_WRITE_MODEL" "$OFFLOAD_WRITE_EFFORT"
+printf '  threshold    %s lines\n' "$OFFLOAD_MIN_LINES"
+
+if [ ${#problems[@]} -eq 0 ]; then
+  printf '\n  ready\n'
+else
+  printf '\n'
+  for p in "${problems[@]}"; do printf '  %b %s\n' "$bad" "$p"; done
+fi
+
+printf '\n  providers\n'
+while IFS= read -r prov; do
+  cmd=$(offload_provider_cmd "$prov")
+  if command -v "$cmd" >/dev/null 2>&1; then mark="$ok"; note=""
+  else mark="$dim·$off"; note=" (not installed)"; fi
+  keyvar=$(offload_provider_key_var "$prov")
+  if [ -n "$keyvar" ]; then
+    if [ -n "${!keyvar:-}" ]; then note="$note  $keyvar set"
+    else mark="$warn"; note="  $keyvar not set"; fi
+  fi
+  cap=$(offload_provider_max_bytes "$prov")
+  [ "$cap" -gt 0 ] && note="$note  max $((cap/1024))KB per call"
+  if [ "$prov" = ollama ] && command -v ollama >/dev/null 2>&1; then
+    ollama list 2>/dev/null | tail -n +2 | grep -q . || { mark="$warn"; note=" no models — ollama pull qwen3:8b"; }
+  fi
+  printf '    %b %-12s %s%s\n' "$mark" "$prov" "$cmd" "$note"
+done < <(offload_providers)
+
+if [ "${verbose:-0}" -eq 1 ]; then
+  printf '\n%s\n' "────────────────────────────────────────────────────────────────"
+  printf '\n  host        %s\n' "$host_label"
+  printf '  provider    %s (read) / %s (write)\n' "$OFFLOAD_READ_PROVIDER" "$OFFLOAD_WRITE_PROVIDER"
+  printf '  timeout     %ss per worker call\n' "$OFFLOAD_TIMEOUT"
+  printf '  max bytes   %sKB sent to a worker in one call\n' "$((OFFLOAD_MAX_BYTES/1024))"
+  printf '  main rate   $%s / 1M\n' "$OFFLOAD_MAIN_RATE"
+  printf '  ledger      %s\n' "$OFFLOAD_LEDGER"
+  printf '  config      %s\n' "$PWD/.offload.env"
+  printf '              %s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/offload/config"
+fi
+
+[ "$do_test" -eq 0 ] && { printf '\n  offload doctor --test   to call each worker\n\n'; exit 0; }
+
+printf '\n'
+rc_all=0
+probe() {
+  local role="$1" model msg out start end
+  case "$role" in
+    read)  model="$OFFLOAD_READ_MODEL" ;;
+    write) model="$OFFLOAD_WRITE_MODEL" ;;
+  esac
+  msg=$(mktemp); printf 'Reply with the single word: pong\n' > "$msg"
+  start=$(date +%s)
+  out=$(offload_invoke "$role" 'Answer with exactly one word.' "$msg" 2>&1)
+  end=$(date +%s); rm -f "$msg"
+  if printf '%s' "$out" | grep -qi pong; then
+    printf '  %b %-6s %s  %ss\n' "$ok" "$role" "$model" "$((end-start))"
+  else
+    printf '  %b %-6s %s  failed\n' "$bad" "$role" "$model"
+    printf '      %b%s%b\n' "$dim" "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" "$off"
+    rc_all=1
+  fi
+}
+probe read
+[ "$OFFLOAD_WRITE_MODEL" = "$OFFLOAD_READ_MODEL" ] && [ "$OFFLOAD_WRITE_PROVIDER" = "$OFFLOAD_READ_PROVIDER" ] \
+  && printf '  %b write  same worker\n' "$ok" || probe write
+printf '\n'
+exit $rc_all

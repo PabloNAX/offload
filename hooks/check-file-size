@@ -1,0 +1,24 @@
+#!/bin/bash
+# offload · PreToolUse(Read): block full reads of large files, point at /bulk-reader.
+# Exit 0 with no output = allow. JSON deny = block.
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/../scripts/lib/common.sh"
+offload_load_config
+
+input=$(cat)
+offload_record_host_model "$input"   # remember which model drives this session
+file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')
+offset=$(printf '%s'    "$input" | jq -r '.tool_input.offset // empty')
+limit=$(printf '%s'     "$input" | jq -r '.tool_input.limit // empty')
+
+# Targeted read (offset/limit) — Claude already knows what it wants.
+if [ -n "$offset" ] || [ -n "$limit" ]; then exit 0; fi
+# Missing path / nonexistent file — let Read produce the error.
+if [ -z "$file_path" ] || [ ! -f "$file_path" ]; then exit 0; fi
+
+lines=$(wc -l < "$file_path" 2>/dev/null | tr -d ' ')
+[ "${lines:-0}" -le "$OFFLOAD_MIN_LINES" ] && exit 0
+
+offload_ledger_block "$file_path" "$lines" Read
+offload_hook_deny "File is ${lines} lines (threshold ${OFFLOAD_MIN_LINES}). Do NOT read it whole. Use the /bulk-reader skill: \"$OFFLOAD_ROOT/bin/offload\" read --question \"<what you need to know>\" --paths \"$file_path\" . If you need exact lines for an edit, re-read with offset/limit for just that section."

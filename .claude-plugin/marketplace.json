@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "offload",
+  "version": "0.2.0",
+  "description": "Local marketplace exposing the offload plugin.",
+  "owner": { "name": "pablo" },
+  "plugins": [
+    {
+      "name": "offload",
+      "description": "Delegate large reads and boilerplate generation to a cheaper worker model. Hooks + scripts + savings ledger.",
+      "version": "0.2.0",
+      "source": "./",
+      "category": "developer-tools"
+    }
+  ]
+}

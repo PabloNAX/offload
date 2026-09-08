@@ -1,0 +1,147 @@
+#!/bin/bash
+# offload · PreToolUse(Bash): catch full-file reads (cat/less/more, or head/tail with a count
+# above the threshold) on large files and point at /bulk-reader.
+#
+# Allowed through: pipes, redirects, head/tail with no count or a count <= threshold,
+# byte-limited reads (-c), small files, nonexistent files, unparseable commands.
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/../scripts/lib/common.sh"
+offload_load_config
+
+input=$(cat)
+offload_record_host_model "$input"   # remember which model drives this session
+command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
+[ -z "$command" ] && exit 0
+
+# Piped → targeted read.  Redirected → not read into context.
+printf '%s' "$command" | grep -qE '\|' && exit 0
+printf '%s' "$command" | grep -qE '>'  && exit 0
+
+# Examine each simple command in a `a && b ; c` chain.
+segments=$(printf '%s\n' "$command" | sed -E 's/&&|;|\|\|/\n/g')
+
+# `sed` is the natural next move after cat is blocked, so it gets real handling:
+#   sed -i …            editing in place — output goes to the file, not the context. allow.
+#   sed 's/…/…/' f      no -n means every line is printed. block on a large file.
+#   sed -n '/re/p' f    pattern-addressed, grep-like. allow.
+#   sed -n '1,500p' f   explicit range — block only if the span exceeds the threshold.
+#   sed -n '1,$p' f     open-ended to end-of-file. block.
+check_sed() {
+  local seg="$1" toks=() t i n file="" script="" has_n=0 start end span
+  while IFS= read -r t; do [ -n "$t" ] && toks+=("$t"); done < <(printf '%s\n' "$seg" | xargs -n1 printf '%s\n' 2>/dev/null) || return 0
+  n=${#toks[@]}; [ "$n" -lt 2 ] && return 0
+
+  i=1
+  while [ "$i" -lt "$n" ]; do
+    t="${toks[$i]}"
+    case "$t" in
+      -i|-i.*|--in-place*) return 0 ;;             # in-place edit — never a context read
+      -n|--quiet|--silent) has_n=1 ;;
+      -ne|-en)             has_n=1; [ -z "$script" ] && { i=$((i+1)); script="${toks[$i]:-}"; } ;;
+      -e|--expression)     i=$((i+1)); script="${script}${toks[$i]:-};" ;;
+      -f|--file)           return 0 ;;             # script from a file — do not guess
+      --)                  i=$((i+1)); [ -z "$script" ] && script="${toks[$i]:-}" || file="${toks[$i]:-}" ;;
+      -*)                  ;;
+      *)                   if [ -z "$script" ]; then script="$t"; else file="$t"; break; fi ;;
+    esac
+    i=$((i+1))
+  done
+
+  [ -z "$file" ] && return 0
+  [ -f "$file" ] || return 0
+  local lines; lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+  [ "${lines:-0}" -le "$OFFLOAD_MIN_LINES" ] && return 0
+
+  # Without -n, sed echoes every line it does not delete.
+  if [ "$has_n" -eq 0 ]; then
+    case "$script" in *d\;*|*d) return 0 ;; esac   # deleting lines — output size unknown, allow
+    offload_sed_deny "$file" "$lines"; return 1
+  fi
+
+  # -n with a numeric range: allow only a bounded span at or under the threshold.
+  if printf '%s' "$script" | grep -qE '[0-9]+,[0-9]+ *p'; then
+    start=$(printf '%s' "$script" | sed -E 's/.*[^0-9]?([0-9]+),([0-9]+) *p.*/\1/')
+    end=$(printf   '%s' "$script" | sed -E 's/.*[^0-9]?([0-9]+),([0-9]+) *p.*/\2/')
+    span=$(( end - start + 1 ))
+    [ "$span" -le "$OFFLOAD_MIN_LINES" ] && return 0
+    offload_sed_deny "$file" "$lines"; return 1
+  fi
+  # Open-ended range to end-of-file prints the rest of the file.
+  if printf '%s' "$script" | grep -qE '[0-9]+, *\$ *p|^ *1? *, *\$ *p'; then
+    offload_sed_deny "$file" "$lines"; return 1
+  fi
+  # Anything else under -n (pattern addresses, single lines) is targeted.
+  return 0
+}
+
+offload_sed_deny() {
+  offload_ledger_block "$1" "$2" Bash
+  offload_hook_deny "File is ${2} lines (threshold ${OFFLOAD_MIN_LINES}). This sed prints (nearly) the whole file. Use the /bulk-reader skill: \"$OFFLOAD_ROOT/bin/offload\" read --question \"<what you need to know>\" --paths \"$1\" — or print a slice of at most ${OFFLOAD_MIN_LINES} lines."
+}
+
+check_segment() {
+  local seg="$1" cmd count="" file="" toks=() t i n takes_count=0
+  seg="${seg#"${seg%%[![:space:]]*}"}"
+  case "$seg" in
+    cat\ *|head\ *|tail\ *|less\ *|more\ *|nl\ *|bat\ *|sed\ *) ;;
+    *) return 0 ;;
+  esac
+  cmd="${seg%% *}"
+
+  # Shell-aware split (handles quotes and escaped spaces). Unbalanced quotes → give up, allow.
+  while IFS= read -r t; do [ -n "$t" ] && toks+=("$t"); done < <(printf '%s\n' "$seg" | xargs -n1 printf '%s\n' 2>/dev/null) || return 0
+  n=${#toks[@]}; [ "$n" -lt 2 ] && return 0
+
+  if [ "$cmd" = sed ]; then check_sed "$seg" || return 1; return 0; fi
+
+  # Only head/tail have a line-count flag. For cat/less/more/nl/bat, -n & friends are plain
+  # flags (cat -n numbers lines) and must not be mistaken for a count.
+  case "$cmd" in head|tail) takes_count=1 ;; esac
+
+  i=1
+  while [ "$i" -lt "$n" ]; do
+    t="${toks[$i]}"
+    if [ "$takes_count" -eq 0 ]; then
+      case "$t" in
+        --) i=$((i+1)); file="${toks[$i]:-}"; break ;;
+        -*) ;;
+        *)  file="$t"; break ;;
+      esac
+      i=$((i+1)); continue
+    fi
+    case "$t" in
+      --lines=*)   count="${t#--lines=}" ;;
+      -n|--lines)  i=$((i+1)); count="${toks[$i]:-}" ;;
+      -n[0-9]*)    count="${t#-n}" ;;
+      -[0-9]*)     count="${t#-}" ;;
+      -c*|--bytes*) return 0 ;;                       # byte-limited peek — tiny
+      --)          i=$((i+1)); file="${toks[$i]:-}"; break ;;
+      -*)          ;;                                 # other flag
+      *)           file="$t"; break ;;
+    esac
+    i=$((i+1))
+  done
+  [ -z "$file" ] && return 0
+  [ -f "$file" ] || return 0
+
+  local lines; lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+  [ "${lines:-0}" -le "$OFFLOAD_MIN_LINES" ] && return 0
+
+  case "$cmd" in
+    head|tail)
+      # No count → default 10 lines.  Numeric count within threshold → targeted read.
+      [ -z "$count" ] && return 0
+      case "$count" in *[!0-9]*) ;; *) [ "$count" -le "$OFFLOAD_MIN_LINES" ] && return 0 ;; esac
+      ;;
+  esac
+
+  offload_ledger_block "$file" "$lines" Bash
+  offload_hook_deny "File is ${lines} lines (threshold ${OFFLOAD_MIN_LINES}). Do NOT ${cmd} it whole. Use the /bulk-reader skill: \"$OFFLOAD_ROOT/bin/offload\" read --question \"<what you need to know>\" --paths \"$file\" — or read a specific slice with head -n/tail -n ≤ ${OFFLOAD_MIN_LINES}."
+  return 1
+}
+
+while IFS= read -r seg; do
+  check_segment "$seg" || exit 0     # first deny wins (already printed)
+done <<< "$segments"
+exit 0

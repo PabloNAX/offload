@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq (macOS)
+        if: runner.os == 'macOS'
+        run: brew list jq >/dev/null 2>&1 || brew install jq
+
+      - name: Shell syntax check
+        run: |
+          for f in bin/offload install.sh hooks/check-* scripts/bulk-read scripts/code-write \
+                   scripts/offload-doctor scripts/lib/common.sh scripts/lib/providers/*.sh evals/run.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      - name: Python syntax check
+        run: python3 -m py_compile scripts/offload-gain
+
+      - name: Hook evals
+        run: ./evals/run.sh
+
+      - name: Manifests are valid JSON
+        run: |
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json \
+                   .codex-plugin/plugin.json .agents/plugins/marketplace.json hooks/hooks.json; do
+            jq -e . "$f" >/dev/null || { echo "invalid JSON: $f"; exit 1; }
+          done
+
+      - name: Versions agree across manifests
+        run: |
+          v=$(jq -r .version .claude-plugin/plugin.json)
+          for f in .codex-plugin/plugin.json .claude-plugin/marketplace.json; do
+            got=$(jq -r '.version // (.plugins[0].version)' "$f")
+            [ "$got" = "$v" ] || { echo "version mismatch in $f: $got != $v"; exit 1; }
+          done
+          echo "version $v"
+
+      - name: Hook commands are quoted in hooks.json
+        run: |
+          # An unquoted ${CLAUDE_PLUGIN_ROOT} breaks on any install path containing a space,
+          # and a hook that errors is silently ignored — the block never happens.
+          jq -r '.hooks[][].hooks[].command' hooks/hooks.json | while read -r c; do
+            case "$c" in '"'*'"') ;; *) echo "unquoted hook command: $c"; exit 1 ;; esac
+          done
+
+      - name: Manifests must not redeclare hooks/hooks.json
+        run: |
+          # Both agents auto-load hooks/hooks.json. Declaring it again in the manifest
+          # makes Claude Code reject the whole plugin ("Duplicate hooks file detected"),
+          # which silently disables every hook.
+          for f in .claude-plugin/plugin.json .codex-plugin/plugin.json; do
+            jq -e 'has("hooks")' "$f" >/dev/null && { echo "$f must not declare .hooks"; exit 1; }
+          done
+          echo "ok"
+
+      - name: Hooks refuse to crash on junk input
+        run: |
+          for h in hooks/check-file-size hooks/check-bash-read; do
+            echo '{}'            | "$h" >/dev/null || { echo "$h failed on {}"; exit 1; }
+            echo 'not json'      | "$h" >/dev/null || { echo "$h failed on junk"; exit 1; }
+            printf ''            | "$h" >/dev/null || { echo "$h failed on empty"; exit 1; }
+          done
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          severity: error
+          additional_files: 'offload bulk-read code-write offload-gain offload-doctor check-file-size check-bash-read'

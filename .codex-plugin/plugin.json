@@ -1,0 +1,26 @@
+{
+  "name": "offload",
+  "version": "0.2.0",
+  "description": "Keeps large file reads and boilerplate generation out of your main model's context by delegating them to a cheaper worker (Claude Sonnet, Codex, \u2026). Hooks block big reads; scripts do the delegation; a ledger tracks what you saved.",
+  "author": {
+    "name": "pablo"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "token-optimization",
+    "delegation",
+    "context",
+    "claude-code",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Offload",
+    "shortDescription": "Keep big reads out of your main model's context",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "CLI"
+    ]
+  }
+}

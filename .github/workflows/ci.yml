@@ -81,4 +81,6 @@ jobs:
       - uses: ludeeus/action-shellcheck@master
         with:
           severity: error
-          additional_files: 'offload bulk-read code-write offload-gain offload-doctor check-file-size check-bash-read'
+          # offload-gain is Python, not shell; listing it here makes shellcheck
+          # fail with SC1071. It is covered by the py_compile step above.
+          additional_files: 'offload bulk-read code-write offload-doctor check-file-size check-bash-read'

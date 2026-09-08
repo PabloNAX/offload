@@ -279,17 +279,25 @@ offload_project() {   # -> project id for $1 (default $PWD), or "unknown"
 # hook errors, so a stale hook and no hook look identical, and the only symptom is that the
 # wall quietly stops working. Print any cache whose hooks or scripts differ from the source.
 offload_stale_caches() {
-  local base d
+  local base ver d found
+  ver=$(jq -r .version "$OFFLOAD_ROOT/.claude-plugin/plugin.json" 2>/dev/null) || return 0
+  [ -n "$ver" ] && [ "$ver" != null ] || return 0
   for base in "$HOME/.claude/plugins/cache/offload/offload" "$HOME/.codex/plugins/cache/offload/offload"; do
     [ -d "$base" ] || continue
-    for d in "$base"/*; do
-      [ -d "$d/hooks" ] || continue
-      [ "$d" -ef "$OFFLOAD_ROOT" ] && continue        # running from the cache itself
-      if ! diff -rq -x '__pycache__' "$d/hooks"   "$OFFLOAD_ROOT/hooks"   >/dev/null 2>&1 ||
-         ! diff -rq -x '__pycache__' "$d/scripts" "$OFFLOAD_ROOT/scripts" >/dev/null 2>&1; then
-        printf '%s\n' "$d"
-      fi
-    done
+    found=0
+    for d in "$base"/*; do [ -d "$d/hooks" ] && found=1; done
+    [ "$found" -eq 1 ] || continue                    # marketplace registered, nothing installed
+    d="$base/$ver"
+    # An uninstall can leave the previous version's directory behind, so an old directory
+    # sitting next to a current one means nothing. Only the copy matching this source's
+    # version is the one the agent runs; if it is absent or has drifted, the agent is stale.
+    if [ ! -d "$d/hooks" ]; then
+      printf '%s\n' "$base/(no $ver)"
+    elif [ ! "$d" -ef "$OFFLOAD_ROOT" ] &&
+         { ! diff -rq -x '__pycache__' "$d/hooks"   "$OFFLOAD_ROOT/hooks"   >/dev/null 2>&1 ||
+           ! diff -rq -x '__pycache__' "$d/scripts" "$OFFLOAD_ROOT/scripts" >/dev/null 2>&1; }; then
+      printf '%s\n' "$d"
+    fi
   done
 }
 

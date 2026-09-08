@@ -40,6 +40,50 @@ def known_rate(model):
     m = (model or "").lower()
     return any(pat in m for pat, _ in RATES)
 
+# A block row estimates cost as bytes/4, which is a statement about text. Read renders an
+# image as vision tokens (~w*h/750, capped near 1600) and a PDF page by page, so bytes/4
+# overstates those by two orders of magnitude. The hook no longer logs them; this list keeps
+# a ledger written by an older version from inflating the report.
+MEDIA_EXT = {
+    "pdf", "jpg", "jpeg", "png", "gif", "webp", "bmp", "ico", "tif", "tiff", "heic", "avif", "svgz",
+    "mp3", "wav", "flac", "ogg", "m4a", "mp4", "mov", "avi", "mkv", "webm",
+    "zip", "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "jar", "war", "whl", "dmg", "pkg",
+    "so", "dylib", "dll", "exe", "bin", "o", "a", "class", "wasm", "pyc", "pyo",
+    "sqlite", "sqlite3", "db", "pdb", "woff", "woff2", "ttf", "otf", "eot",
+    "psd", "ai", "sketch", "xlsx", "docx", "pptx", "key", "numbers", "pages",
+}
+
+def is_media(path):
+    return os.path.splitext(path or "")[1].lstrip(".").lower() in MEDIA_EXT
+
+def norm(path, cwd=None):
+    """Ledger paths are absolute since the realpath fix, but older rows stored whatever the
+    tool was given. A block on '/tmp/x/big.py' and a delegation of 'big.py' are one file, and
+    counting it as two is a straight doubling of the reported saving."""
+    if not path: return ""
+    p = path if os.path.isabs(path) else os.path.join(cwd or "", path)
+    try: return os.path.realpath(p)
+    except OSError: return p
+
+def clean_blocks(blocks):
+    """Drop what a block row cannot honestly claim: media priced as if it were source text,
+    and the same block logged twice by one tool call (a retry, or two matchers on one event)."""
+    out, seen = [], {}
+    for r in blocks:
+        f = norm(r.get("file"), r.get("cwd"))
+        if r.get("tool") == "Read" and is_media(f):
+            continue                       # Read never charged bytes/4 for this
+        k = (f, r.get("tool"))
+        ep = r.get("epoch")
+        if ep is None:                     # legacy row: fall back to the timestamp
+            try: ep = int(dt.datetime.fromisoformat(r["ts"].replace("Z", "+00:00")).timestamp())
+            except Exception: ep = None
+        if ep is not None and k in seen and abs(ep - seen[k]) < 2:
+            continue
+        if ep is not None: seen[k] = ep
+        out.append(r)
+    return out
+
 def parse_since(s):
     if not s: return None
     now = dt.datetime.now(dt.timezone.utc)
@@ -93,15 +137,17 @@ def main():
     if a.help: print(__doc__); return
 
     allrows = load(parse_since(a.since))
-    blocks = [r for r in allrows if r.get("role") == "block"]
+    blocks = clean_blocks([r for r in allrows if r.get("role") == "block"])
     rows   = [r for r in allrows if r.get("role") != "block"]
+    dropped = len([r for r in allrows if r.get("role") == "block"]) - len(blocks)
     n = len(rows); reads = sum(1 for r in rows if r.get("role") == "read"); writes = n - reads
     b_n = len(blocks); b_tok = sum(r.get("est_tokens", 0) for r in blocks)
     b_files = len({r.get("file") for r in blocks})
     # A blocked file that was then sent to a worker is already counted in `kept`.
     # Only blocks solved another way (grep, a narrow re-read) add on top of it.
-    delegated_files = {f for r in rows for f in r.get("files", [])}
-    b_tok_undelegated = sum(r.get("est_tokens", 0) for r in blocks if r.get("file") not in delegated_files)
+    delegated_files = {norm(f, r.get("cwd")) for r in rows for f in r.get("files", [])}
+    b_tok_undelegated = sum(r.get("est_tokens", 0) for r in blocks
+                            if norm(r.get("file"), r.get("cwd")) not in delegated_files)
     secs_total = sum(r.get("secs", 0) for r in rows)
     tin = sum(r.get("in_tokens", 0) for r in rows); tout = sum(r.get("out_tokens", 0) for r in rows)
     kept = max(tin - tout, 0); pct = (100.0 * kept / tin) if tin else 0.0
@@ -134,7 +180,7 @@ def main():
                           "blocked_tokens_not_delegated": b_tok_undelegated, "worker_secs": secs_total,
                           "usd_would_have_paid": round(would_have, 4), "usd_worker_cost": round(worker_cost, 4),
                           "usd_still_paid": round(still_pay, 4), "usd_net_saved": round(usd, 4),
-                          "amp": a.amp, "usd_saved_amplified": round(usd_amp, 2), "by_worker": by, "ledger": LEDGER}, indent=2))
+                          "blocks_dropped": dropped, "amp": a.amp, "usd_saved_amplified": round(usd_amp, 2), "by_worker": by, "ledger": LEDGER}, indent=2))
         return
 
     if not b_n and not n:
@@ -144,11 +190,11 @@ def main():
     if a.by_project:
         # Delegated files are already counted in the worker rows; only blocks that were
         # never delegated add on top, exactly as in the headline number.
-        delegated = {f for r in rows for f in r.get("files", [])}
+        delegated = {norm(f, r.get("cwd")) for r in rows for f in r.get("files", [])}
         per = collections.defaultdict(lambda: {"tok": 0, "blocks": 0, "calls": 0, "usd": 0.0})
         for r in blocks:
             e = per[r.get("project") or "unknown"]; e["blocks"] += 1
-            if r.get("file") not in delegated:
+            if norm(r.get("file"), r.get("cwd")) not in delegated:
                 e["tok"] += r.get("est_tokens", 0)
                 e["usd"] += r.get("est_tokens", 0) * main_in * a.amp
         for r in rows:
@@ -185,13 +231,21 @@ def main():
     print(f"\noffload Token Savings{since}")
     print("=" * 60)
     print()
-    print(f"Tokens saved:      {human(total_kept)} ({eff:.1f}%)")
-    print(f"Money saved:       ${usd:,.2f}")
+    # Two different kinds of number, kept apart on purpose. "delegated" is measured: those
+    # tokens were really sent to a worker and really did not enter this context. "avoided" is
+    # a counterfactual: the read was stopped, so nobody paid, and what it *would* have cost is
+    # an estimate. Adding them into one headline figure is how a savings report starts lying.
+    print(f"Kept out of context: {human(total_kept)}")
+    print(f"  delegated  {human(kept):>8}   measured  — sent to a worker, minus its answer")
+    print(f"  avoided    {human(b_tok_undelegated):>8}   estimated — whole-file reads the wall stopped")
+    print(f"Money saved:       ${usd:,.2f}   (your model at ${a.rate:g}/1M in, file held {a.amp:g} turn{'s' if a.amp != 1 else ''})")
     print(f"Big files caught:  {b_n}" + (f"  ({b_files} different files)" if b_files != b_n else ""))
     print(f"Worker calls:      {n}" + (f"  ({workers})" if workers else ""))
     if secs_total:
         print(f"Worker time:       {dur(secs_total)} (avg {secs_total/max(n,1):.1f}s)")
-    print(f"Efficiency meter: {bar(eff, 25)} {eff:.1f}%")
+    print(f"Share of would-be context avoided: {bar(eff, 25)} {eff:.1f}%")
+    if dropped:
+        print(f"\n  ({dropped} ledger row{'s' if dropped != 1 else ''} ignored: duplicates, or media priced as if it were source text)")
     print()
 
     if not a.full:

@@ -278,19 +278,68 @@ offload_hook_deny() {
   jq -nc --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
 }
 
+# Absolute, symlink-resolved path. Stock macOS has neither realpath(1) nor readlink -f, and
+# `offload-gain` has to be able to see that the file a hook blocked and the file a worker was
+# then handed are the same file: relative on one side and absolute on the other is how one
+# file gets counted twice, once as "avoided" and once as "delegated".
+offload_realpath() {
+  local d b
+  b=$(basename -- "$1"); d=$(dirname -- "$1")
+  d=$(cd "$d" 2>/dev/null && pwd -P) || { printf '%s' "$1"; return 0; }
+  case "$d" in */) printf '%s%s' "$d" "$b" ;; *) printf '%s/%s' "$d" "$b" ;; esac
+}
+
+# Is this a file the wall should reason about at all?
+#
+# The threshold is `wc -l` and the cost estimate is bytes/4; both are statements about text.
+# A JPEG's "line count" is however many 0x0A bytes land in the pixel data, and Read does not
+# put a JPEG in context as bytes — it costs vision tokens (about w*h/750, capped near 1600),
+# two orders of magnitude below what bytes/4 claims. A PDF is read page by page. Estimating
+# either by file size does not overstate the saving slightly, it invents most of it.
+offload_is_text() {   # 0 = text, 1 = not
+  local ext n m
+  ext=$(printf '%s' "${1##*.}" | tr '[:upper:]' '[:lower:]')
+  case "$ext" in
+    pdf|jpg|jpeg|png|gif|webp|bmp|ico|tif|tiff|heic|avif|svgz) return 1 ;;
+    mp3|wav|flac|ogg|m4a|mp4|mov|avi|mkv|webm)                 return 1 ;;
+    zip|gz|tgz|bz2|xz|zst|7z|rar|jar|war|whl|dmg|pkg)          return 1 ;;
+    so|dylib|dll|exe|bin|o|a|class|wasm|pyc|pyo)               return 1 ;;
+    sqlite|sqlite3|db|pdb|woff|woff2|ttf|otf|eot)              return 1 ;;
+    psd|ai|sketch|xlsx|docx|pptx|key|numbers|pages)            return 1 ;;
+  esac
+  # Unknown extension: the classic test — a NUL byte in the first 8KB means binary.
+  m=$(head -c 8192 "$1" 2>/dev/null | wc -c | tr -d ' ')
+  n=$(head -c 8192 "$1" 2>/dev/null | LC_ALL=C tr -d '\000' | wc -c | tr -d ' ')
+  [ "${m:-0}" = "${n:-0}" ]
+}
+
 # Record the block itself, not just the delegations that follow it.
 # A blocked read that the model then solves with grep costs zero worker calls but still
 # keeps the whole file out of context — without this the wall's main effect is invisible
 # and `offload gain` reports nothing at all.
 offload_ledger_block() {   # $1 file  $2 lines  $3 tool
-  local bytes est
+  local file tool bytes est now prev
+  tool="${3:-Read}"
+  file=$(offload_realpath "$1")
   bytes=$(wc -c < "$1" 2>/dev/null | tr -d ' '); bytes=${bytes:-0}
   est=$(( bytes / 4 ))
+  now=$(date +%s)
+  # One tool call can trip this hook more than once — a retry, or two matchers on the same
+  # event. Two identical blocks inside the same second are one event; logging both doubles
+  # the reported saving for a file that was only ever blocked once.
+  prev=$(tail -n 8 "$OFFLOAD_LEDGER" 2>/dev/null \
+         | jq -r --arg f "$file" --arg t "$tool" \
+             'select(.role=="block" and .file==$f and .tool==$t) | .epoch // empty' 2>/dev/null | tail -1)
+  case "$prev" in
+    ''|*[!0-9]*) ;;
+    *) [ $(( now - prev )) -lt 2 ] && return 0 ;;
+  esac
   mkdir -p "$(dirname "$OFFLOAD_LEDGER")" 2>/dev/null
-  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg file "$1" --arg tool "${3:-Read}" \
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg file "$file" --arg tool "$tool" \
+     --argjson epoch "$now" \
      --argjson lines "${2:-0}" --argjson est "$est" --arg cwd "$PWD" \
-     --arg project "$(offload_project "$(dirname "$1")")" \
-     '{ts:$ts,role:"block",tool:$tool,file:$file,lines:$lines,est_tokens:$est,cwd:$cwd,project:$project}' \
+     --arg project "$(offload_project "$(dirname "$file")")" \
+     '{ts:$ts,epoch:$epoch,role:"block",tool:$tool,file:$file,lines:$lines,est_tokens:$est,cwd:$cwd,project:$project}' \
      >> "$OFFLOAD_LEDGER" 2>/dev/null || true
 }
 
@@ -338,7 +387,15 @@ offload_invoke() {
 
 # offload_ledger ROLE FILES_JSON_ARRAY   — append one line, print a one-line receipt to stderr
 offload_ledger() {
-  local role="$1" files="$2" note=""
+  local role="$1" files="$2" note="" p
+  local abs=()
+  # Absolute on both sides of the ledger — see offload_realpath. A delegation logged as
+  # "big.py" and a block logged as "/tmp/x/big.py" are the same file, and the report must
+  # not bill it once as avoided and once as delegated.
+  while IFS= read -r p; do
+    [ -n "$p" ] && abs+=("$(offload_realpath "$p")")
+  done < <(printf '%s' "$files" | jq -r '.[]?' 2>/dev/null)
+  if [ -n "${abs[*]+x}" ]; then files=$(printf '%s\n' "${abs[@]}" | jq -R . | jq -sc .); fi
   mkdir -p "$(dirname "$OFFLOAD_LEDGER")" 2>/dev/null
   jq -nc \
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg role "$role" \

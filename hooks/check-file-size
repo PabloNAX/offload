@@ -16,6 +16,10 @@ limit=$(printf '%s'     "$input" | jq -r '.tool_input.limit // empty')
 if [ -n "$offset" ] || [ -n "$limit" ]; then exit 0; fi
 # Missing path / nonexistent file — let Read produce the error.
 if [ -z "$file_path" ] || [ ! -f "$file_path" ]; then exit 0; fi
+# Not text — not this hook's business. Read renders an image as vision tokens and a PDF page
+# by page; `wc -l` measures neither, and blocking on it would report a saving that the read
+# was never going to cost in the first place.
+offload_is_text "$file_path" || exit 0
 
 lines=$(wc -l < "$file_path" 2>/dev/null | tr -d ' ')
 [ "${lines:-0}" -le "$OFFLOAD_MIN_LINES" ] && exit 0

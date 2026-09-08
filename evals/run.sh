@@ -105,9 +105,62 @@ https://github.com/WBG%20-%20Digital/app.git|WBG - Digital/app
 CASES
 }
 
+# The savings report is only worth reading if its numbers are measurements. These three
+# cases are the ones that turned a real ~9K saving into a reported 2.1M: media priced as if
+# Read had swallowed it byte by byte, one block logged twice, and the same file counted once
+# as blocked and once as delegated because the two rows spelled its path differently.
+run_accounting_suite() {
+  . "$SCRIPT_DIR/../scripts/lib/common.sh"
+  echo; echo "Savings accounting"; echo "────────────────────────────────────────────────────────────"
+  local d led got want
+  d=$(mktemp -d); led="$d/ledger.jsonl"
+  python3 -c "print('x = 1\n'*600, end='')" > "$d/big.py"
+  cp "$d/big.py" "$d/notes.pdf"                                 # >350 "lines", but Read pages it
+  head -c 40000 /dev/urandom > "$d/blob"                        # binary, no extension
+  seq 1 600 > "$d/plain.txt"
+
+  _case() {   # $1 name  $2 expected  $3 actual
+    TOTAL=$((TOTAL+1))
+    if [ "$3" = "$2" ]; then printf "  \033[32mPASS\033[0m  %-28s %s\n" "$1" "$2"; PASSED=$((PASSED+1))
+    else printf "  \033[31mFAIL\033[0m  %-28s expected=%s got=%s\n" "$1" "$2" "$3"; FAILED=$((FAILED+1)); fi
+  }
+
+  # 1. media and binaries are not this hook's business at all.
+  for f in notes.pdf blob; do
+    got=$(printf '{"tool_input":{"file_path":"%s/%s"}}' "$d" "$f" \
+          | OFFLOAD_LEDGER="$led" bash "$SCRIPT_DIR/../hooks/check-file-size" 2>/dev/null || true)
+    _case "media-not-blocked:$f" allow "$(decision_of "$got")"
+  done
+  # …while a big source file still is.
+  got=$(printf '{"tool_input":{"file_path":"%s/plain.txt"}}' "$d" \
+        | OFFLOAD_LEDGER="$led" bash "$SCRIPT_DIR/../hooks/check-file-size" 2>/dev/null || true)
+  _case "text-still-blocked" block "$(decision_of "$got")"
+  _case "media-left-no-ledger-row" 1 "$(grep -c . "$led" 2>/dev/null || echo 0)"
+
+  # 2. a hook that fires three times for one tool call is one block, not three.
+  for _ in 1 2; do
+    printf '{"tool_input":{"file_path":"%s/plain.txt"}}' "$d" \
+      | OFFLOAD_LEDGER="$led" bash "$SCRIPT_DIR/../hooks/check-file-size" >/dev/null 2>&1 || true
+  done
+  _case "duplicate-blocks-collapsed" 1 "$(grep -c '"role":"block"' "$led" 2>/dev/null || echo 0)"
+
+  # 3. a delegation written as a relative path must cancel the block written as an absolute
+  #    one — otherwise the file is billed twice, as avoided *and* as delegated.
+  ( cd "$d" && OFFLOAD_LEDGER="$led" \
+    OFFLOAD_LAST_IN=1000 OFFLOAD_LAST_OUT=10 OFFLOAD_LAST_SECS=1 \
+    OFFLOAD_LAST_PROVIDER=test OFFLOAD_LAST_MODEL=claude-haiku-4-5 OFFLOAD_LAST_EFFORT=low \
+    bash -c '. "'"$SCRIPT_DIR"'/../scripts/lib/common.sh"; offload_ledger read "[\"plain.txt\"]"' ) 2>/dev/null
+  want=$(OFFLOAD_LEDGER="$led" python3 "$SCRIPT_DIR/../scripts/offload-gain" --json | jq -r .blocked_tokens_not_delegated)
+  _case "delegated-file-not-double-billed" 0 "$want"
+  want=$(OFFLOAD_LEDGER="$led" python3 "$SCRIPT_DIR/../scripts/offload-gain" --json | jq -r .kept_out_tokens)
+  _case "kept-is-in-minus-out" 990 "$want"
+  rm -rf "$d"
+}
+
 run_suite "$SCRIPT_DIR/../hooks/check-file-size" "$SCRIPT_DIR/hook-evals.json"      "Read hook (check-file-size)"
 run_suite "$SCRIPT_DIR/../hooks/check-bash-read" "$SCRIPT_DIR/bash-hook-evals.json" "Bash hook (check-bash-read)"
 run_project_suite
+run_accounting_suite
 echo; echo "════════════════════════════════════════════════════════════"
 printf "Total: \033[32m%d passed\033[0m, \033[31m%d failed\033[0m, %d total\n" "$PASSED" "$FAILED" "$TOTAL"
 [ "$FAILED" -gt 0 ] && exit 1; exit 0

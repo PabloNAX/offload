@@ -29,17 +29,26 @@ $ offload gain
 offload Token Savings
 ============================================================
 
-Tokens saved:      116.2K (98.2%)
-Money saved:       $1.16
+Kept out of context: 116.2K
+  delegated    109.4K   measured  — sent to a worker, minus its answer
+  avoided        6.8K   estimated — whole-file reads the wall stopped
+Money saved:       $1.16   (your model at $5/1M in, file held 1 turn)
 Big files caught:  37  (11 different files)
 Worker calls:      14  (claude-sonnet-5)
 Worker time:       3m02s (avg 13.0s)
-Efficiency meter: ████████████████████████░ 98.2%
+Share of would-be context avoided: ████████████████████████░ 98.2%
 ```
 
-**Tokens saved** counts tokens that would have sat in your main model's context and did
-not. Two things produce that: the hook stopped a read and the model answered another way,
-or a cheap worker read the file and sent back a short answer instead.
+The two lines are different kinds of number and are kept apart on purpose.
+
+**delegated** is a measurement. Those tokens were really sent to a worker, and what came
+back is subtracted, so the figure is what the file would have added to your context minus
+what the answer actually did add.
+
+**avoided** is a counterfactual. The hook stopped a whole-file read and the model answered
+some other way, so nobody paid anything; what the read *would* have cost is an estimate of
+a thing that did not happen. It is the softer of the two numbers, which is why it is not
+folded into the headline.
 
 Per project:
 
@@ -468,6 +477,14 @@ real savings are somewhat lower than reported.
 
 **Token counts are `bytes / 4`**, not a real tokenizer. Expect 10 to 20 percent error on
 code, in either direction.
+
+**Only text is counted.** `bytes / 4` is a claim about source code. An image does not enter
+context as bytes — it costs vision tokens, roughly `width × height / 750` and capped near
+1600, which for a 1MB photo is off by two orders of magnitude from `bytes / 4`. A PDF is
+read page by page. So the hooks leave images, PDFs, archives and binaries alone: they are
+not blocked, and they never appear in the ledger. If your report ever showed a JPEG saving
+you 200K tokens, that was this bug, and `gain` now discards such rows from old ledgers and
+says how many it dropped.
 
 **`offload write --target`** writes generated code to disk, so almost none of it enters
 context, but the ledger still counts those tokens as "returned". That one errs the other

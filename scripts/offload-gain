@@ -168,6 +168,14 @@ def main():
     still_pay = tout * main_in * a.amp
     usd = would_have - worker_cost - still_pay
     usd_amp = usd
+    # Prompt-cache-aware companion: Claude Code keeps the prompt cached, so the
+    # first send is a cache WRITE (1.25x input) and every re-send a READ (0.1x).
+    # The flat figure above prices every re-send at full input — right when the
+    # cache expires between turns (5m TTL), an overstatement in a fast one.
+    hold_mult = 1.25 + 0.10 * (a.amp - 1) if a.amp >= 1 else a.amp
+    would_have_cached = (tin + b_tok_undelegated) * main_in * hold_mult
+    still_pay_cached = tout * main_in * hold_mult
+    usd_cached = would_have_cached - worker_cost - still_pay_cached
     by = collections.defaultdict(lambda: {"calls": 0, "in": 0, "out": 0, "secs": 0})
     for r in rows:
         k = f'{r.get("provider","?")}/{r.get("model","?")}@{r.get("effort","?")}'
@@ -180,6 +188,8 @@ def main():
                           "blocked_tokens_not_delegated": b_tok_undelegated, "worker_secs": secs_total,
                           "usd_would_have_paid": round(would_have, 4), "usd_worker_cost": round(worker_cost, 4),
                           "usd_still_paid": round(still_pay, 4), "usd_net_saved": round(usd, 4),
+                          "usd_would_have_paid_cached": round(would_have_cached, 4),
+                          "usd_saved_cached": round(usd_cached, 4),
                           "blocks_dropped": dropped, "amp": a.amp, "usd_saved_amplified": round(usd_amp, 2), "by_worker": by, "ledger": LEDGER}, indent=2))
         return
 
@@ -292,6 +302,8 @@ def main():
     print(f"  What the cheap worker charged instead    -${worker_cost:>9,.4f}")
     print(f"  What you still pay for its answers       -${still_pay:>9,.4f}")
     print(f"  You saved                                 ${usd:>9,.4f}")
+    print(f"  With prompt caching (1.25x write, 0.1x re-reads)")
+    print(f"    would have paid / saved                 ${would_have_cached:>9,.4f} / ${usd_cached:,.4f}")
     print(f"  (your model at ${a.rate:g}/1M input, file held for {a.amp:g} turn{'s' if a.amp != 1 else ''})")
 
     if a.history:

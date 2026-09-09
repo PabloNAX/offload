@@ -509,6 +509,8 @@ default) is the most pessimistic reading.
 
 ### What the number does not include
 
+**Prompt caching.** The money figures price every re-send of the context at full input rate. In Claude Code the conversation prefix is served from the prompt cache — first send a cache write at 1.25x input, re-sends cache reads at 0.1x — so a fast conversation pays far less to hold the same context. In the worked example above, `held 10 turns` at full price is $1.000, but with the cache holding it is about $0.215, which turns the 93% saving into roughly 78%. The flat figure is the honest one when turns are more than a cache TTL apart (5m by default) and the prefix is re-bought each turn; `gain -v` and `gain --json` print the cache-aware figure beside it.
+
 **Follow-up verification.** After a worker answers, the model often runs a `grep` and a
 narrow re-read to check it. Those tokens do enter context and are not in the ledger, so
 real savings are somewhat lower than reported.

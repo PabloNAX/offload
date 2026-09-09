@@ -29,7 +29,7 @@ $ offload gain
 offload Token Savings
 ============================================================
 
-Tokens saved:      116.2K   (112.4K → 3.0K back, ~6.8K blocked)
+Tokens saved:      116.2K   (112.4K → 3.0K back, ~6.8K not needed)
 Money saved:       $1.16
 Big files caught:  37  (11 different files)
 Worker calls:      14  (claude-sonnet-5)
@@ -41,12 +41,12 @@ The bracket is the arithmetic, not a label. **112.4K → 3.0K back** means worke
 112.4K tokens of files and returned 3.0K tokens of answers; the difference never entered
 your context. Both numbers are weighed, so you can check the subtraction yourself.
 
-**~6.8K blocked** is the other kind of number and stays outside the arrow on purpose.
-Those are reads the hook stopped, which the model then answered some other way — with a
-`grep`, or a narrow re-read. It still got its answer; what it did not get was the whole
-file. Nothing was sent to a worker, so nothing was weighed, and what that read *would* have
-cost is a guess about something that did not happen. The tilde says so, and `gain` spells
-it out underneath whenever the figure is non-zero.
+**~6.8K not needed** is the other kind of number and stays outside the arrow on purpose.
+The model went to read a whole file, the hook stopped it, and it found what it wanted with
+a `grep` or a narrow re-read instead. It got its answer; the file turned out not to be
+needed. Nothing was sent to a worker, so nothing was weighed, and what that read *would*
+have cost is a guess about something that did not happen. The tilde says so, and `gain`
+spells it out underneath whenever the figure is non-zero.
 
 Per project:
 

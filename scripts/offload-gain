@@ -243,7 +243,7 @@ def main():
     if tin:
         parts.append(f"{human(tin)} \u2192 {human(tout)} back")
     if b_tok_undelegated:
-        parts.append(f"~{human(b_tok_undelegated)} blocked")
+        parts.append(f"~{human(b_tok_undelegated)} not needed")
     made_of = f"   ({', '.join(parts)})" if parts else ""
     print(f"Tokens saved:      {human(total_kept)}{made_of}")
     print(f"Money saved:       ${usd:,.2f}")
@@ -252,14 +252,18 @@ def main():
     if secs_total:
         print(f"Worker time:       {dur(secs_total)} (avg {secs_total/max(n,1):.1f}s)")
     print(f"Efficiency meter: {bar(eff, 25)} {eff:.1f}%")
-    # The blocked figure is the one people misread. Left unexplained it looks like a warning
-    # that the model missed something, which is the opposite of what it means, and it is also
-    # the one number here that was never weighed. Both facts belong on screen, not in a README.
+    # This is the figure people misread, and every wording that describes the mechanism —
+    # "blocked", "never read" — describes it as something being denied, so it lands as a
+    # warning that the model missed something. It is the opposite: the model went looking,
+    # found the answer cheaper, and the file turned out not to be needed. Say that, and say
+    # that it is the one number here that was never weighed.
     if b_tok_undelegated:
+        nfiles = len({norm(r.get("file"), r.get("cwd")) for r in blocks
+                      if norm(r.get("file"), r.get("cwd")) not in delegated_files})
         print()
-        print(f"  ~{human(b_tok_undelegated)} blocked = whole-file reads the hook stopped. The model still got its")
-        print("  answer, from a grep or a narrow re-read. Nothing was sent to a worker, so")
-        print("  nothing was weighed: that part is an estimate, the arrow above is measured.")
+        print(f"  ~{human(b_tok_undelegated)} not needed = the model went to read {nfiles} big file{'s' if nfiles != 1 else ''}, found what it")
+        print("  wanted with a grep instead, and never loaded them. Nothing went to a worker,")
+        print("  so nothing was weighed — an estimate. The arrow above is measured.")
     if dropped:
         print(f"\n  ({dropped} ledger row{'s' if dropped != 1 else ''} ignored: duplicates, or media priced as if it were source text)")
     print()

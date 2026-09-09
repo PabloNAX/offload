@@ -429,9 +429,26 @@ offload config [--init] [--global]
 - Pipes and redirects (`cat x | grep y`, `cat x > y`). Those are not reads into context.
 - `grep`, `rg`, and every other targeted search.
 - `sed -i` (editing), `sed -n '/pattern/p'`, `sed -n '100,120p'` (targeted slices).
+- `rtk read` with a line cap (`-m N`, `--tail-lines N`) or its own filtering (`-l minimal`,
+  `-l aggressive`). You already asked for a bounded read.
 
 Blocked dumpers: `cat`, `less`, `more`, `nl`, `bat`, `head` and `tail` with a count over
-the threshold, and `sed` when it would print nearly the whole file.
+the threshold, `sed` when it would print nearly the whole file, and `rtk read` in its
+default full-content form.
+
+### Wrappers
+
+A wrapper hides the real command behind its own first token, and this hook reads the first
+token. `rtk proxy "cat huge.dart"` used to sail straight through — it does not any more.
+Unwrapped before parsing, up to three levels deep:
+
+```
+rtk proxy "<cmd>"        sh -c "<cmd>"        bash -c "<cmd>"        zsh -c "<cmd>"
+```
+
+This matters more than it sounds if you run a proxy that rewrites every Bash call. An agent
+that hits any friction with the proxy reaches for its escape hatch, and without unwrapping
+every read after that point is invisible to the wall — including the ones worth catching.
 
 The hook cannot catch everything. `awk`, `python -c`, or a custom script can always read a
 file. It covers what a model actually reaches for, which in practice is `cat` first and

@@ -14,6 +14,31 @@ offload_record_host_model "$input"   # remember which model drives this session
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -z "$command" ] && exit 0
 
+# `rtk proxy "<cmd>"` and `sh -c "<cmd>"` hand the real command to a shell one level down.
+# This wall parses the first token, so without unwrapping it sees `rtk` or `sh`, matches
+# nothing in the read list, and lets a whole-file read straight through. That is not
+# hypothetical: on a machine where a proxy rewrites every Bash call, an agent that hits any
+# friction with the proxy reaches for its escape hatch, and every read after that is invisible.
+offload_unwrap() {   # $1 command -> the command that will actually run
+  local c="$1" inner i=0
+  while [ "$i" -lt 3 ]; do
+    inner=""
+    case "$c" in
+      rtk\ proxy\ *)                    inner="${c#rtk proxy }" ;;
+      sh\ -c\ *|bash\ -c\ *|zsh\ -c\ *)  inner="${c#* -c }" ;;
+      *) break ;;
+    esac
+    case "$inner" in
+      \"*\")  inner="${inner#\"}"; inner="${inner%\"}" ;;
+      \'*\')  inner="${inner#\'}"; inner="${inner%\'}" ;;
+    esac
+    [ -n "$inner" ] || break
+    c="$inner"; i=$((i+1))
+  done
+  printf '%s' "$c"
+}
+command=$(offload_unwrap "$command")
+
 # Piped → targeted read.  Redirected → not read into context.
 # A stderr-only redirect (2>/dev/null, 2>&1) still sends stdout to the context, so it
 # does not count as a redirect.
@@ -85,10 +110,48 @@ offload_sed_deny() {
   offload_hook_deny "File is ${2} lines (threshold ${OFFLOAD_MIN_LINES}). This sed prints (nearly) the whole file. Use the /bulk-reader skill: \"$OFFLOAD_ROOT/bin/offload\" read --question \"<what you need to know>\" --paths \"$1\" — or print a slice of at most ${OFFLOAD_MIN_LINES} lines."
 }
 
+# `rtk read FILE` prints the file whole — verified, 1853 lines in and 1853 out — so it is a
+# `cat` by another name and belongs behind the same wall. Its own flags are the escape
+# hatches: an explicit line cap is a targeted read, and asking for its filtering is a
+# deliberate choice to shrink the output. Only the default, full-content form is blocked.
+check_rtk_read() {
+  local seg="$1" toks=() t i n file="" count="" level=""
+  while IFS= read -r t; do [ -n "$t" ] && toks+=("$t"); done < <(printf '%s\n' "$seg" | xargs -n1 printf '%s\n' 2>/dev/null) || return 0
+  n=${#toks[@]}; [ "$n" -lt 3 ] && return 0
+  i=2
+  while [ "$i" -lt "$n" ]; do
+    t="${toks[$i]}"
+    case "$t" in
+      -m|--max-lines|--tail-lines) i=$((i+1)); count="${toks[$i]:-}" ;;
+      --max-lines=*)               count="${t#--max-lines=}" ;;
+      --tail-lines=*)              count="${t#--tail-lines=}" ;;
+      -m[0-9]*)                    count="${t#-m}" ;;
+      -l|--level)                  i=$((i+1)); level="${toks[$i]:-}" ;;
+      --level=*)                   level="${t#--level=}" ;;
+      -l?*)                        level="${t#-l}" ;;
+      --)                          i=$((i+1)); file="${toks[$i]:-}"; break ;;
+      -*)                          ;;
+      *)                           file="$t"; break ;;
+    esac
+    i=$((i+1))
+  done
+  [ -z "$file" ] && return 0
+  [ -f "$file" ] || return 0
+  local lines; lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+  [ "${lines:-0}" -le "$OFFLOAD_MIN_LINES" ] && return 0
+  case "$count" in ''|*[!0-9]*) ;; *) [ "$count" -le "$OFFLOAD_MIN_LINES" ] && return 0 ;; esac
+  case "$level" in minimal|aggressive) return 0 ;; esac
+
+  offload_ledger_block "$file" "$lines" Bash
+  offload_hook_deny "File is ${lines} lines (threshold ${OFFLOAD_MIN_LINES}). \`rtk read\` prints it whole. Use the /bulk-reader skill: \"$OFFLOAD_ROOT/bin/offload\" read --question \"<what you need to know>\" --paths \"$file\" — or cap it with rtk read -m ${OFFLOAD_MIN_LINES}."
+  return 1
+}
+
 check_segment() {
   local seg="$1" cmd count="" file="" toks=() t i n takes_count=0
   seg="${seg#"${seg%%[![:space:]]*}"}"
   case "$seg" in
+    rtk\ read\ *) check_rtk_read "$seg" || return 1; return 0 ;;
     cat\ *|head\ *|tail\ *|less\ *|more\ *|nl\ *|bat\ *|sed\ *) ;;
     *) return 0 ;;
   esac

@@ -157,9 +157,51 @@ run_accounting_suite() {
   rm -rf "$d"
 }
 
+# A wrapper hides the real command behind its own first token, and this wall reads the first
+# token. `rtk proxy "cat huge"` therefore sailed straight through until these cases existed.
+# The JSON suites cannot cover it: their fixture generator derives the path from the command,
+# and a quoted inner command defeats that, so the wrapper cases build their own fixtures.
+run_wrapper_suite() {
+  echo; echo "Wrappers (rtk proxy, sh -c, rtk read)"; echo "────────────────────────────────────────────────────────────"
+  local d led big small
+  d=$(mktemp -d); led="$d/ledger.jsonl"
+  big="$d/big.dart"; small="$d/small.dart"
+  seq 1 2000 > "$big"; seq 1 100 > "$small"
+
+  _w() {   # $1 expected  $2 command
+    TOTAL=$((TOTAL+1))
+    local got actual
+    got=$(printf '{"tool_input":{"command":%s}}' "$(printf '%s' "$2" | jq -Rs .)" \
+          | OFFLOAD_LEDGER="$led" bash "$SCRIPT_DIR/../hooks/check-bash-read" 2>/dev/null || true)
+    actual=$(decision_of "$got")
+    if [ "$actual" = "$1" ]; then printf "  \033[32mPASS\033[0m  %-52s %s\n" "${2//$d\//}" "$1"; PASSED=$((PASSED+1))
+    else printf "  \033[31mFAIL\033[0m  %-52s expected=%s got=%s\n" "${2//$d\//}" "$1" "$actual"; FAILED=$((FAILED+1)); fi
+  }
+
+  _w block "rtk proxy \"cat $big\""
+  _w block "rtk proxy \"sed -n '1,2000p' $big\""
+  _w block "sh -c \"cat $big\""
+  _w block "bash -c \"head -n 900 $big\""
+  _w block "rtk read $big"
+  _w block "rtk proxy \"rtk read $big\""
+  _w block "rtk read -l none $big"
+
+  _w allow "rtk proxy \"cat $small\""
+  _w allow "rtk read -m 100 $big"
+  _w allow "rtk read --tail-lines 50 $big"
+  _w allow "rtk read -l aggressive $big"
+  _w allow "rtk proxy \"sed -n '140,260p' $big\""
+  _w allow "rtk proxy \"cat $big | grep foo\""
+  _w allow "rtk proxy \"cat $big > $d/out\""
+  _w allow "rtk grep foo $big"
+  _w allow "rtk git status"
+  rm -rf "$d"
+}
+
 run_suite "$SCRIPT_DIR/../hooks/check-file-size" "$SCRIPT_DIR/hook-evals.json"      "Read hook (check-file-size)"
 run_suite "$SCRIPT_DIR/../hooks/check-bash-read" "$SCRIPT_DIR/bash-hook-evals.json" "Bash hook (check-bash-read)"
 run_project_suite
+run_wrapper_suite
 run_accounting_suite
 echo; echo "════════════════════════════════════════════════════════════"
 printf "Total: \033[32m%d passed\033[0m, \033[31m%d failed\033[0m, %d total\n" "$PASSED" "$FAILED" "$TOTAL"
